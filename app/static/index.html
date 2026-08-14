@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Grok 助手</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect rx='8' width='32' height='32' fill='%230b0b0d'/%3E%3Cpath d='M16 6l2.4 6.4L25 15l-6.6 2.6L16 24l-2.4-6.4L7 15l6.6-2.6z' fill='%23f4c56a'/%3E%3C/svg%3E" />
+  <style>
+    :root {
+      --bg: #09090b;
+      --bg-elev: #121216;
+      --bg-chat: rgba(18, 18, 22, 0.72);
+      --line: rgba(255, 255, 255, 0.08);
+      --text: #f4f1ea;
+      --muted: #9a958b;
+      --gold: #f4c56a;
+      --gold-dim: rgba(244, 197, 106, 0.14);
+      --user: #1c1c22;
+      --assistant: transparent;
+      --danger: #ff7a7a;
+      --ok: #7dcea0;
+      --tool: #8ab4ff;
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
+      background:
+        radial-gradient(1200px 600px at 80% -10%, rgba(244, 197, 106, 0.08), transparent 50%),
+        radial-gradient(900px 500px at -10% 110%, rgba(90, 120, 255, 0.08), transparent 45%),
+        var(--bg);
+      color: var(--text);
+      letter-spacing: 0.01em;
+    }
+    .app {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      max-width: 860px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px 10px;
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      backdrop-filter: blur(16px);
+      background: linear-gradient(to bottom, rgba(9,9,11,0.92), rgba(9,9,11,0.55) 70%, transparent);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 11px;
+      background: linear-gradient(160deg, #2a2418, #151513);
+      border: 1px solid rgba(244, 197, 106, 0.35);
+      display: grid;
+      place-items: center;
+      box-shadow: 0 0 24px rgba(244, 197, 106, 0.15);
+    }
+    .brand h1 {
+      font-size: 16px;
+      font-weight: 650;
+      margin: 0;
+    }
+    .brand p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .header-actions { display: flex; gap: 8px; align-items: center; }
+    .model-pill {
+      font-size: 11px;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.03);
+    }
+    button.ghost, button.icon {
+      background: rgba(255,255,255,0.04);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button.ghost:hover, button.icon:hover { border-color: rgba(244,197,106,0.4); }
+    button.icon { padding: 8px 10px; }
+    #thread {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 20px 24px;
+      scroll-behavior: smooth;
+    }
+    .empty {
+      margin: 12vh auto 0;
+      text-align: center;
+      max-width: 560px;
+    }
+    .empty h2 {
+      font-size: 28px;
+      font-weight: 600;
+      margin: 0 0 8px;
+    }
+    .empty p { color: var(--muted); margin: 0 0 28px; }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+    }
+    .chip {
+      text-align: left;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 14px;
+      padding: 12px 14px;
+      max-width: 260px;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1.45;
+      transition: border-color .15s, transform .15s;
+    }
+    .chip:hover { border-color: rgba(244,197,106,.45); transform: translateY(-1px); }
+    .chip span { display: block; color: var(--gold); font-size: 11px; margin-bottom: 4px; }
+    .msg {
+      display: flex;
+      gap: 12px;
+      margin: 18px 0;
+      animation: in .25s ease;
+    }
+    @keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .msg.user { flex-direction: row-reverse; }
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      flex: none;
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      border: 1px solid var(--line);
+      background: #161616;
+    }
+    .msg.user .avatar { background: var(--gold-dim); color: var(--gold); }
+    .bubble {
+      max-width: min(680px, 86%);
+      padding: 12px 14px;
+      border-radius: var(--radius);
+      line-height: 1.65;
+      font-size: 15px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.assistant .bubble {
+      background: var(--bg-chat);
+      border: 1px solid var(--line);
+    }
+    .msg.user .bubble {
+      background: #1b1a17;
+      border: 1px solid rgba(244,197,106,0.18);
+    }
+    .bubble a { color: var(--gold); }
+    .bubble code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+      background: rgba(255,255,255,0.06);
+      padding: 1px 6px;
+      border-radius: 6px;
+    }
+    .bubble pre {
+      background: #0d0d10;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+    .bubble pre code { background: none; padding: 0; }
+    .bubble p { margin: 0 0 10px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .tools {
+      max-width: min(680px, 86%);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 0 44px 8px auto;
+    }
+    .msg.assistant + .tools, .tools { margin-left: 44px; margin-right: auto; }
+    .tool {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 12.5px;
+      color: var(--muted);
+      background: rgba(138, 180, 255, 0.06);
+      border: 1px solid rgba(138, 180, 255, 0.16);
+      border-radius: 12px;
+      padding: 8px 12px;
+    }
+    .tool.running { border-color: rgba(244,197,106,.35); background: var(--gold-dim); }
+    .tool.fail { border-color: rgba(255,122,122,.35); background: rgba(255,122,122,.08); }
+    .tool b { color: var(--text); font-weight: 600; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--tool); margin-top: 5px; flex: none;
+    }
+    .tool.running .dot { background: var(--gold); animation: pulse 1s infinite; }
+    .tool.ok .dot { background: var(--ok); }
+    .tool.fail .dot { background: var(--danger); }
+    @keyframes pulse { 50% { opacity: .35; } }
+    .error-banner {
+      margin: 8px 44px;
+      color: var(--danger);
+      background: rgba(255,122,122,.08);
+      border: 1px solid rgba(255,122,122,.25);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 13px;
+    }
+    .composer-wrap {
+      padding: 8px 20px 22px;
+    }
+    .composer {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      background: #141416;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 10px 10px 10px 16px;
+      box-shadow: var(--shadow);
+    }
+    .composer:focus-within { border-color: rgba(244,197,106,.4); }
+    textarea {
+      flex: 1;
+      resize: none;
+      max-height: 160px;
+      min-height: 24px;
+      background: transparent;
+      border: 0;
+      color: var(--text);
+      font: inherit;
+      outline: none;
+      line-height: 1.5;
+    }
+    #send {
+      width: 40px;
+      height: 40px;
+      border: 0;
+      border-radius: 14px;
+      background: var(--gold);
+      color: #1a1408;
+      cursor: pointer;
+      font-weight: 700;
+      flex: none;
+    }
+    #send:disabled { opacity: .4; cursor: not-allowed; }
+    .hint {
+      text-align: center;
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 8px;
+    }
+    .warn-key {
+      margin: 0 20px 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(244,197,106,.1);
+      border: 1px solid rgba(244,197,106,.3);
+      color: var(--gold);
+      font-size: 13px;
+      display: none;
+    }
+    .typing { color: var(--muted); font-size: 13px; margin: 4px 44px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2l2.2 6.6L21 11l-6.8 2.4L12 20l-2.2-6.6L3 11l6.8-2.4L12 2z" fill="#f4c56a"/>
+          </svg>
+        </div>
+        <div>
+          <h1>Grok 助手</h1>
+          <p>搜索 · 读文件 · 执行命令</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="model-pill" id="modelPill">grok-4.6</span>
+        <button class="ghost" id="clearBtn" type="button">新对话</button>
+      </div>
+    </header>
+    <div class="warn-key" id="keyWarn">未检测到 XAI_API_KEY。请复制 .env.example 为 .env，到 https://console.x.ai 创建密钥后重启服务。</div>
+    <div id="thread"></div>
+    <div class="composer-wrap">
+      <form class="composer" id="form">
+        <textarea id="input" rows="1" placeholder="问点什么… Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="send" type="submit" title="发送">↑</button>
+      </form>
+      <div class="hint">工具在本机 workspace 沙箱中运行，不是安全隔离环境。</div>
+    </div>
+  </div>
+  <script>
+    const thread = document.getElementById("thread");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+    const sendBtn = document.getElementById("send");
+    const keyWarn = document.getElementById("keyWarn");
+    const modelPill = document.getElementById("modelPill");
+    let busy = false;
+
+    const DEMOS = [
+      { tag: "搜索", text: "帮我搜一下 xAI Grok API 怎么做 function calling" },
+      { tag: "读文件", text: "读一下 workspace 里的 sample.txt" },
+      { tag: "命令", text: "在工作目录里列出文件并创建一个 hello.txt" },
+    ];
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function renderMarkdown(src) {
+      const escaped = escapeHtml(src || "");
+      const parts = escaped.split(/```([\s\S]*?)```/g);
+      return parts.map((chunk, i) => {
+        if (i % 2 === 1) {
+          const nl = chunk.indexOf("\n");
+          const code = nl >= 0 ? chunk.slice(nl + 1) : chunk;
+          return "<pre><code>" + code.trim() + "</code></pre>";
+        }
+        return chunk
+          .replace(/`([^`]+)`/g, "<code>$1</code>")
+          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+          .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+          .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+          .replace(/\n/g, "<br>");
+      }).join("");
+    }
+
+    function renderEmpty() {
+      thread.innerHTML = `
+        <div class="empty">
+          <h2>今天想做点什么？</h2>
+          <p>这是一个可运行的 Grok 风格助手。模型可以循环调用工具，直到给出最终回答。</p>
+          <div class="chips">
+            ${DEMOS.map(d => `<button class="chip" type="button" data-text="${escapeHtml(d.text)}"><span>${d.tag}</span>${escapeHtml(d.text)}</button>`).join("")}
+          </div>
+        </div>`;
+      thread.querySelectorAll(".chip").forEach(btn => {
+        btn.addEventListener("click", () => {
+          input.value = btn.dataset.text;
+          input.focus();
+          sendMessage(btn.dataset.text);
+        });
+      });
+    }
+
+    function avatar(role) {
+      return role === "user"
+        ? '<div class="avatar">你</div>'
+        : '<div class="avatar">G</div>';
+    }
+
+    function appendUser(text) {
+      const empty = thread.querySelector(".empty");
+      if (empty) empty.remove();
+      const el = document.createElement("div");
+      el.className = "msg user";
+      el.innerHTML = `${avatar("user")}<div class="bubble">${escapeHtml(text)}</div>`;
+      thread.appendChild(el);
+      thread.scrollTop = thread.scrollHeight;
+    }
+
+    function appendAssistantShell() {
+      const wrap = document.createElement("div");
+      wrap.className = "asst-wrap";
+      wrap.innerHTML = `
+        <div class="tools" hidden></div>
+        <div class="msg assistant">
+          ${avatar("assistant")}
+          <div class="bubble" data-body></div>
+        </div>
+        <div class="typing" data-status>正在思考…</div>
+      `;
+      thread.appendChild(wrap);
+      thread.scrollTop = thread.scrollHeight;
+      return wrap;
+    }
+
+    function addToolRow(wrap, data, running) {
+      const box = wrap.querySelector(".tools");
+      box.hidden = false;
+      const row = document.createElement("div");
+      const cls = running ? "running" : (data.ok === false ? "fail" : "ok");
+      row.className = "tool " + cls;
+      row.dataset.name = data.name || "";
+      row.innerHTML = `<div class="dot"></div><div><b>${escapeHtml(data.label || data.name || "工具")}</b>
+        ${data.args_summary ? " · " + escapeHtml(data.args_summary) : ""}
+        <div>${running ? "正在调用工具…" : escapeHtml(data.summary || "")}</div></div>`;
+      box.appendChild(row);
+      thread.scrollTop = thread.scrollHeight;
+      return row;
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch("/api/history");
+        const data = await res.json();
+        modelPill.textContent = data.model || "grok-4.6";
+        keyWarn.style.display = data.has_api_key ? "none" : "block";
+        if (!data.messages || !data.messages.length) {
+          renderEmpty();
+          return;
+        }
+        thread.innerHTML = "";
+        for (const m of data.messages) {
+          if (m.role === "user") appendUser(m.content);
+          else {
+            const wrap = appendAssistantShell();
+            wrap.querySelector("[data-status]").remove();
+            (m.tools || []).forEach(t => addToolRow(wrap, t, false));
+            const body = wrap.querySelector("[data-body]");
+            body.innerHTML = renderMarkdown(m.content || "");
+            if (m.error) {
+              const err = document.createElement("div");
+              err.className = "error-banner";
+              err.textContent = m.error;
+              wrap.appendChild(err);
+            }
+          }
+        }
+        thread.scrollTop = thread.scrollHeight;
+      } catch {
+        renderEmpty();
+      }
+    }
+
+    async function sendMessage(text) {
+      if (busy) return;
+      const msg = (text || "").trim();
+      if (!msg) return;
+      busy = true;
+      sendBtn.disabled = true;
+      appendUser(msg);
+      input.value = "";
+      input.style.height = "auto";
+      const wrap = appendAssistantShell();
+      const status = wrap.querySelector("[data-status]");
+      const body = wrap.querySelector("[data-body]");
+      body.parentElement.style.display = "none";
+
+      try {
+        const res = await fetch("/api/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        if (!res.ok) {
+          let detail = "请求失败 " + res.status;
+          try {
+            const j = await res.json();
+            detail = j.detail || detail;
+          } catch {}
+          throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        let currentEvent = "message";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const chunks = buf.split("\n\n");
+          buf = chunks.pop();
+          for (const chunk of chunks) {
+            let event = currentEvent;
+            let dataLine = "";
+            for (const line of chunk.split("\n")) {
+              if (line.startsWith("event:")) event = line.slice(6).trim();
+              if (line.startsWith("data:")) dataLine += line.slice(5).trim();
+            }
+            if (!dataLine) continue;
+            let data = {};
+            try { data = JSON.parse(dataLine); } catch { continue; }
+            if (event === "tool_start") {
+              status.textContent = "正在调用工具…";
+              addToolRow(wrap, data, true);
+            } else if (event === "tool_end") {
+              const rows = [...wrap.querySelectorAll(".tool.running")];
+              const last = rows.reverse().find(r => r.dataset.name === data.name) || rows[0];
+              if (last) last.remove();
+              addToolRow(wrap, data, false);
+              status.textContent = "正在思考…";
+            } else if (event === "message") {
+              status.remove();
+              body.parentElement.style.display = "flex";
+              body.innerHTML = renderMarkdown(data.content || "");
+            } else if (event === "error") {
+              status.remove();
+              const err = document.createElement("div");
+              err.className = "error-banner";
+              err.textContent = data.message || "出错了";
+              wrap.appendChild(err);
+            }
+            thread.scrollTop = thread.scrollHeight;
+          }
+        }
+        if (status && status.isConnected) status.remove();
+      } catch (err) {
+        if (status && status.isConnected) status.remove();
+        const banner = document.createElement("div");
+        banner.className = "error-banner";
+        banner.textContent = err.message || String(err);
+        wrap.appendChild(banner);
+      } finally {
+        busy = false;
+        sendBtn.disabled = false;
+        input.focus();
+        thread.scrollTop = thread.scrollHeight;
+      }
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      sendMessage(input.value);
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage(input.value);
+      }
+    });
+    input.addEventListener("input", () => {
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 160) + "px";
+    });
+    document.getElementById("clearBtn").addEventListener("click", async () => {
+      await fetch("/api/clear", { method: "POST" });
+      renderEmpty();
+    });
+    loadHistory();
+  </script>
+</body>
+</html>
