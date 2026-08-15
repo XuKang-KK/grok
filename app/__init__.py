@@ -1,3 +1,3 @@
-"""Grok-like local assistant (v1)."""
+"""Grok-like local assistant (v2)."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

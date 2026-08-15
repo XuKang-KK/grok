@@ -12,21 +12,30 @@ import json
 import os
 import re
 import subprocess
+import ipaddress
+import socket
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
+
+from app.memory import memory_read as _memory_read
+from app.memory import memory_write as _memory_write
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE = (PROJECT_ROOT / "workspace").resolve()
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 MAX_FILE_BYTES = 120_000
+MAX_WRITE_BYTES = 200_000
 MAX_CMD_OUTPUT = 16_000
+MAX_FETCH_BYTES = 1_000_000
+MAX_FETCH_CHARS = 30_000
 CMD_TIMEOUT_SEC = 15
 SEARCH_RESULTS = 5
+FETCH_TIMEOUT_SEC = 20
 
 # Whole-command scans. Not exhaustive — local-dev only.
 _DANGEROUS = [
@@ -300,6 +309,302 @@ def run_command(command: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# list_dir
+# ---------------------------------------------------------------------------
+
+def list_dir(path: str = ".") -> str:
+    raw_path = "." if not str(path or "").strip() else str(path).strip()
+    try:
+        target = resolve_workspace_path(raw_path)
+    except (ValueError, PermissionError) as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    if not target.exists():
+        return json.dumps({"error": f"目录不存在: {raw_path}"}, ensure_ascii=False)
+    if not target.is_dir():
+        return json.dumps({"error": "不是目录", "path": raw_path}, ensure_ascii=False)
+    entries: list[dict[str, Any]] = []
+    try:
+        children = sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+        for child in children:
+            item: dict[str, Any] = {
+                "name": child.name,
+                "type": "dir" if child.is_dir() else "file",
+            }
+            if child.is_file():
+                try:
+                    item["size"] = child.stat().st_size
+                except OSError:
+                    pass
+            entries.append(item)
+            if len(entries) >= 200:
+                break
+    except OSError as exc:
+        return json.dumps({"error": f"无法列出: {exc}"}, ensure_ascii=False)
+    rel = target.relative_to(WORKSPACE).as_posix()
+    return json.dumps(
+        {"path": rel, "entries": entries, "count": len(entries)},
+        ensure_ascii=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# write_file
+# ---------------------------------------------------------------------------
+
+def write_file(path: str, content: str) -> str:
+    if content is None:
+        content = ""
+    if not isinstance(content, str):
+        content = str(content)
+    encoded = content.encode("utf-8")
+    if len(encoded) > MAX_WRITE_BYTES:
+        return json.dumps(
+            {
+                "error": f"内容过大（{len(encoded)} 字节），上限 {MAX_WRITE_BYTES}",
+            },
+            ensure_ascii=False,
+        )
+    try:
+        target = resolve_workspace_path(path)
+    except (ValueError, PermissionError) as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    if target.exists() and target.is_dir():
+        return json.dumps({"error": "目标是目录，不能写入"}, ensure_ascii=False)
+    parent = target.parent.resolve()
+    if not parent.is_relative_to(WORKSPACE):
+        return json.dumps({"error": "路径越界：只能访问项目下的 workspace/ 目录"}, ensure_ascii=False)
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        return json.dumps({"error": f"写入失败: {exc}"}, ensure_ascii=False)
+    rel = target.relative_to(WORKSPACE).as_posix()
+    return json.dumps(
+        {"ok": True, "path": rel, "bytes": len(encoded)},
+        ensure_ascii=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# fetch_url
+# ---------------------------------------------------------------------------
+
+_BLOCKED_HOSTS = {
+    "localhost",
+    "localhost.localdomain",
+    "ip6-localhost",
+    "ip6-loopback",
+    "metadata.google.internal",
+    "host.docker.internal",
+}
+
+
+def _ip_is_forbidden(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return bool(
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _host_is_forbidden(host: str) -> bool:
+    host = (host or "").strip().lower().rstrip(".")
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if not host:
+        return True
+    if host in _BLOCKED_HOSTS or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return _ip_is_forbidden(ip)
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return True
+    if not infos:
+        return True
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except (ValueError, TypeError):
+            return True
+        if _ip_is_forbidden(ip):
+            return True
+    return False
+
+
+def _validate_public_http_url(url: str) -> str | None:
+    url = (url or "").strip()
+    if not url:
+        return "url 不能为空"
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "无效的 URL"
+    if parsed.scheme not in ("http", "https"):
+        return "只允许 http(s) URL"
+    if parsed.username or parsed.password:
+        return "不允许带用户名/密码的 URL"
+    host = parsed.hostname
+    if not host:
+        return "URL 缺少主机名"
+    if _host_is_forbidden(host):
+        return "拒绝访问本地或私有地址"
+    return None
+
+
+class _HTMLTextExtractor(HTMLParser):
+    _SKIP = {"script", "style", "noscript", "template"}
+    _BLOCK = {
+        "p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6",
+        "section", "article", "blockquote", "pre", "ul", "ol", "table",
+        "header", "footer", "nav",
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip = 0
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._SKIP:
+            self._skip += 1
+        elif tag in self._BLOCK:
+            self._parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP and self._skip:
+            self._skip -= 1
+        elif tag in self._BLOCK:
+            self._parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip:
+            return
+        if data:
+            self._parts.append(data)
+
+    def text(self) -> str:
+        raw = "".join(self._parts)
+        lines = [" ".join(line.split()) for line in raw.splitlines()]
+        return "\n".join(line for line in lines if line)
+
+
+def _extract_text(body: bytes, content_type: str) -> str:
+    ctype = (content_type or "").lower()
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        text = body.decode("utf-8", errors="replace")
+    if "html" in ctype or text.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
+        parser = _HTMLTextExtractor()
+        try:
+            parser.feed(text)
+            parser.close()
+            extracted = parser.text()
+            if extracted:
+                return extracted
+        except Exception:
+            pass
+    return text
+
+
+def fetch_url(url: str) -> str:
+    url = (url or "").strip()
+    err = _validate_public_http_url(url)
+    if err:
+        return json.dumps({"error": err, "url": url}, ensure_ascii=False)
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (compatible; GrokAssistant/0.2; +https://x.ai) "
+            "AppleWebKit/537.36 Chrome/128.0.0.0"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.1",
+    }
+    current = url
+    try:
+        with httpx.Client(
+            timeout=FETCH_TIMEOUT_SEC,
+            follow_redirects=False,
+            headers=headers,
+        ) as client:
+            for _hop in range(6):
+                err = _validate_public_http_url(current)
+                if err:
+                    return json.dumps({"error": err, "url": current}, ensure_ascii=False)
+                resp = client.get(current)
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("location")
+                    if not loc:
+                        return json.dumps(
+                            {"error": "重定向缺少 Location", "url": current},
+                            ensure_ascii=False,
+                        )
+                    current = urljoin(current, loc)
+                    continue
+                if resp.status_code >= 400:
+                    return json.dumps(
+                        {
+                            "error": f"HTTP {resp.status_code}",
+                            "url": str(resp.url),
+                        },
+                        ensure_ascii=False,
+                    )
+                raw = resp.content[:MAX_FETCH_BYTES]
+                if b"\x00" in raw[:1024] and "html" not in (resp.headers.get("content-type") or "").lower():
+                    return json.dumps(
+                        {"error": "拒绝读取二进制内容", "url": str(resp.url)},
+                        ensure_ascii=False,
+                    )
+                extracted = _extract_text(raw, resp.headers.get("content-type") or "")
+                truncated = len(extracted) > MAX_FETCH_CHARS
+                if truncated:
+                    extracted = extracted[:MAX_FETCH_CHARS]
+                payload = {
+                    "url": str(resp.url),
+                    "status": resp.status_code,
+                    "content_type": resp.headers.get("content-type") or "",
+                    "text": extracted,
+                }
+                if truncated:
+                    payload["truncated"] = True
+                    payload["note"] = f"正文已截断至 {MAX_FETCH_CHARS} 字符"
+                return json.dumps(payload, ensure_ascii=False)
+            return json.dumps({"error": "重定向过多", "url": current}, ensure_ascii=False)
+    except httpx.TimeoutException:
+        return json.dumps(
+            {"error": f"请求超时（{FETCH_TIMEOUT_SEC}s）", "url": url},
+            ensure_ascii=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps(
+            {"error": f"{type(exc).__name__}: {exc}", "url": url},
+            ensure_ascii=False,
+        )
+
+
+# ---------------------------------------------------------------------------
+# memory wrappers (persist to data/memory.json)
+# ---------------------------------------------------------------------------
+
+def memory_write(fact: str) -> str:
+    return _memory_write(fact)
+
+
+def memory_read(query: str = "") -> str:
+    return _memory_read(query or "")
+
+
+# ---------------------------------------------------------------------------
 # OpenAI-compatible tool schema + dispatch
 # ---------------------------------------------------------------------------
 
@@ -367,28 +672,150 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_dir",
+            "description": (
+                "列出工作目录 workspace/ 下的文件和子目录。"
+                "路径相对于 workspace，默认当前目录 ."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "相对 workspace 的目录路径，默认 .",
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "在 workspace/ 内创建或覆盖文本文件。"
+                "路径相对于 workspace；禁止路径穿越。"
+                "单次写入上限约 200KB。写文件请优先用本工具。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "相对 workspace 的文件路径",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "要写入的文本内容",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_url",
+            "description": (
+                "GET 抓取一个公开 http(s) 网页并返回提取后的正文。"
+                "会去掉 script/style；正文约 30k 字符封顶。"
+                "禁止 localhost、内网、file:// 等非公开地址。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "要抓取的 http(s) URL",
+                    }
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_write",
+            "description": (
+                "把用户偏好、姓名、长期事实写入持久记忆，跨会话保留。"
+                "例如：用户名字、语言偏好、常用项目路径。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {
+                        "type": "string",
+                        "description": "要记住的一条简短事实",
+                    }
+                },
+                "required": ["fact"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_read",
+            "description": (
+                "读取已保存的记忆。query 为空返回最近若干条；"
+                "有 query 则按关键词过滤。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "可选过滤关键词，为空则返回最近记忆",
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 _DISPATCH: dict[str, Callable[..., str]] = {
     "web_search": web_search,
     "read_file": read_file,
     "run_command": run_command,
+    "list_dir": list_dir,
+    "write_file": write_file,
+    "fetch_url": fetch_url,
+    "memory_write": memory_write,
+    "memory_read": memory_read,
 }
 
 TOOL_LABELS = {
     "web_search": "网络搜索",
     "read_file": "读取文件",
     "run_command": "执行命令",
+    "list_dir": "列出目录",
+    "write_file": "写入文件",
+    "fetch_url": "抓取网页",
+    "memory_write": "写入记忆",
+    "memory_read": "读取记忆",
 }
 
 
 def summarize_args(name: str, args: dict[str, Any]) -> str:
     if name == "web_search":
         return str(args.get("query") or "")[:120]
-    if name == "read_file":
+    if name in ("read_file", "write_file", "list_dir"):
         return str(args.get("path") or "")[:120]
     if name == "run_command":
         return str(args.get("command") or "")[:120]
+    if name == "fetch_url":
+        return str(args.get("url") or "")[:120]
+    if name == "memory_write":
+        return str(args.get("fact") or "")[:120]
+    if name == "memory_read":
+        return str(args.get("query") or "最近记忆")[:120]
     return json.dumps(args, ensure_ascii=False)[:120]
 
 
@@ -411,6 +838,21 @@ def summarize_result(name: str, raw: str) -> str:
         preview = out[0][:60] if out else ""
         tail = f"：{preview}" if preview else ""
         return f"exit {code}{tail}"
+    if name == "list_dir":
+        n = data.get("count")
+        if n is None:
+            n = len(data.get("entries") or [])
+        return f"列出 {n} 项（{data.get('path', '')}）"
+    if name == "write_file":
+        return f"已写入 {data.get('path', '')}（{data.get('bytes', 0)} 字节）"
+    if name == "fetch_url":
+        text = data.get("text") or ""
+        return f"已抓取 {data.get('url', '')}（{len(text)} 字符）"
+    if name == "memory_write":
+        return f"已记住（共 {data.get('count', '?')} 条）"
+    if name == "memory_read":
+        n = len(data.get("facts") or [])
+        return f"返回 {n} 条记忆"
     return "完成"
 
 

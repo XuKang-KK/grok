@@ -1,10 +1,11 @@
-# Grok 助手（本地 MVP）
+# Grok 助手（本地 v0.2）
 
-一个可在本机运行的 Grok 风格对话助手：浏览器里聊天，模型可以循环调用工具（网页搜索、读文件、执行命令），直到给出最终回答。
+一个可在本机运行的 Grok 风格对话助手：浏览器里聊天，模型可以循环调用工具（搜索、读/写文件、抓取网页、记忆），直到给出最终回答。
 
 - 后端：FastAPI + xAI Grok API（OpenAI 兼容 Chat Completions）
-- 前端：单页中文聊天界面
+- 前端：单页中文聊天界面（左侧多会话）
 - 工具在项目下的 `workspace/` 目录执行（本地开发沙箱，**不是**安全隔离环境）
+- 会话与记忆持久化在 `data/`（运行时自动创建，默认不入库）
 
 ## 获取 API Key
 
@@ -50,12 +51,36 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | 工具 | 作用 |
 |------|------|
 | `web_search` | 公开网页搜索，返回标题 / 链接 / 摘要（`ddgs`，失败则抓取 DuckDuckGo HTML） |
+| `fetch_url` | GET 公开 http(s) URL，去掉 script/style 后返回正文（约 30k 字符）；拒绝 localhost / 内网 / `file://` |
+| `list_dir` | 列出 `workspace/` 下的文件和子目录 |
 | `read_file` | 读取 `workspace/` 内文本文件；越界、缺失、二进制会报错 |
+| `write_file` | 在 `workspace/` 内创建或覆盖文本文件（约 200KB 上限）；禁止路径穿越 |
 | `run_command` | 在 `workspace/` 下执行 shell，超时 15s，捕获 stdout/stderr/退出码 |
+| `memory_write` | 把用户偏好 / 长期事实写入 `data/memory.json`（跨会话） |
+| `memory_read` | 检索记忆；`query` 为空返回最近若干条 |
 
 `run_command` 会拦截 `rm -rf /`、`sudo`、`mkfs` 等明显危险模式。这只是本地开发保护，**不是 jail**：进程、网络、宿主机并未隔离。
 
-工具循环最多 8 轮。界面会显示「正在调用工具…」以及每个工具的简要结果。
+写文件请优先让模型调用 `write_file`，而不是用 shell 重定向。
+
+工具循环最多 8 轮。界面会显示「正在调用工具…」以及每个工具的简要结果（默认走 `/api/chat/stream`）。
+
+## 多会话
+
+会话保存在 `data/sessions/<id>.json`（模型消息 + 界面回合）。
+
+- 左侧边栏列出历史对话，点「新对话」创建并切换
+- `GET /api/sessions` 列出；`POST /api/sessions` 创建
+- `POST /api/sessions/{id}/select` 切换当前会话
+- `DELETE /api/sessions/{id}` 删除
+- 发消息时可带 `session_id`；不带则使用当前会话
+- `POST /api/clear` 清空**当前**会话内容（不删除会话文件）
+
+刷新页面会从磁盘恢复当前会话。
+
+## 记忆
+
+`data/memory.json` 保存一个简短事实列表。每轮对话会把最近约 20 条注入系统提示；模型也可主动调用 `memory_write` / `memory_read`。记忆跨会话共享。
 
 ## 示例提示词
 
@@ -67,8 +92,24 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 2. **读一下 workspace 里的 sample.txt**  
    模型应调用 `read_file`（路径如 `sample.txt`）。
 
-3. **在工作目录里列出文件并创建一个 hello.txt**  
-   模型应调用 `run_command`（例如 `ls`，再用重定向写入 `hello.txt`）。
+3. **在 workspace 里写一个 notes.txt，写上三行待办事项**  
+   模型应调用 `write_file`。
+
+4. **记住：我叫小康，喜欢简洁的中文回答**  
+   模型应调用 `memory_write`。之后新对话里也应能用到这条记忆。
+
+5. **抓取 https://example.com 的页面摘要**  
+   模型应调用 `fetch_url`。
+
+## 运行测试
+
+```bash
+cd grok-assistant
+source venv/bin/activate
+pytest
+```
+
+测试覆盖：路径穿越拦截、`write_file`/`read_file` 往返、危险命令拦截、`fetch_url` 拒绝 localhost / 内网。
 
 ## 项目结构
 
@@ -76,19 +117,23 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 grok-assistant/
   README.md
   requirements.txt
+  pytest.ini
   .env.example
   .gitignore
-  app/main.py          # FastAPI：页面 + /api/chat + SSE
+  app/main.py          # FastAPI：页面 + 会话 API + /api/chat + SSE
   app/agent.py         # Grok 工具循环
-  app/tools.py         # web_search / read_file / run_command
+  app/tools.py         # 搜索 / 文件 / 命令 / 抓取网页
+  app/memory.py        # 持久记忆
+  app/sessions.py      # 多会话落盘
   app/static/index.html
+  tests/test_tools.py
   workspace/sample.txt # 演示用中文文本
+  data/                # 运行时创建（已 gitignore）
 ```
-
-会话历史只存在内存中（单会话）。刷新页面会从服务端恢复当前会话；点「新对话」清空。
 
 ## 常见问题
 
 - **未配置 XAI_API_KEY**：服务能启动，但发消息会返回明确错误。按上面步骤配置 `.env` 后重启。
 - **鉴权失败 / 模型不存在**：检查 key 是否有效，或把 `GROK_MODEL` 改成控制台里可用的模型。
 - **搜索为空**：DuckDuckGo 偶发限流，可换关键词重试。
+- **data/ 目录**：首次启动或首次写记忆/会话时自动创建，无需手工建目录。
