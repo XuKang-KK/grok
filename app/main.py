@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 from app.agent import get_api_key, get_model, run_turn  # noqa: E402
+from app.tools import MAX_UPLOAD_BYTES, save_upload  # noqa: E402
 from app.memory import ensure_data_dir  # noqa: E402
 from app.sessions import Session, SessionStore  # noqa: E402
 
@@ -192,6 +193,24 @@ def _collect_turn(sess: Session, user_text: str) -> dict[str, Any]:
         "session_id": sess.id,
         **_status_payload(),
     }
+
+
+@app.post("/api/upload")
+async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Save a small file into workspace/uploads/."""
+    filename = file.filename or ""
+    # Cap before fully buffering if the client sent Content-Length.
+    declared = getattr(file, "size", None)
+    if declared is not None and declared > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="文件过大，上限约 5MB")
+    raw = await file.read()
+    try:
+        payload = json.loads(save_upload(filename, raw))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"上传失败: {exc}") from exc
+    if payload.get("error"):
+        raise HTTPException(status_code=400, detail=str(payload["error"]))
+    return {"ok": True, **payload}
 
 
 @app.post("/api/chat")

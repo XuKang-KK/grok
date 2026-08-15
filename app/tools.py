@@ -30,12 +30,15 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 MAX_FILE_BYTES = 120_000
 MAX_WRITE_BYTES = 200_000
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_CMD_OUTPUT = 16_000
 MAX_FETCH_BYTES = 1_000_000
 MAX_FETCH_CHARS = 30_000
 CMD_TIMEOUT_SEC = 15
 SEARCH_RESULTS = 5
 FETCH_TIMEOUT_SEC = 20
+UPLOADS_DIRNAME = "uploads"
+BLOB_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
 
 # Whole-command scans. Not exhaustive — local-dev only.
 _DANGEROUS = [
@@ -381,6 +384,106 @@ def write_file(path: str, content: str) -> str:
     rel = target.relative_to(WORKSPACE).as_posix()
     return json.dumps(
         {"ok": True, "path": rel, "bytes": len(encoded)},
+        ensure_ascii=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# upload (workspace/uploads)
+# ---------------------------------------------------------------------------
+
+def sanitize_upload_filename(filename: str) -> str:
+    """Return a bare filename, or raise ValueError on path tricks."""
+    raw = str(filename or "").strip()
+    if not raw:
+        raise ValueError("文件名不能为空")
+    if "\x00" in raw:
+        raise ValueError("非法文件名")
+    normalized = raw.replace("\\", "/")
+    if "/" in normalized or normalized in (".", ".."):
+        raise ValueError("非法文件名：禁止路径穿越")
+    name = Path(raw).name
+    if name != raw or name in (".", "..") or not name:
+        raise ValueError("非法文件名：禁止路径穿越")
+    if len(name) > 200:
+        raise ValueError("文件名过长")
+    return name
+
+
+def _unique_upload_path(directory: Path, name: str) -> Path:
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    candidate = directory / name
+    n = 1
+    while candidate.exists():
+        candidate = directory / f"{stem}_{n}{suffix}"
+        n += 1
+        if n > 10_000:
+            raise OSError("无法分配唯一文件名")
+    return candidate
+
+
+def save_upload(filename: str, content: bytes) -> str:
+    """Save an uploaded file into workspace/uploads/. Returns JSON."""
+    if content is None:
+        content = b""
+    if not isinstance(content, (bytes, bytearray)):
+        return json.dumps({"error": "内容必须是字节"}, ensure_ascii=False)
+    content = bytes(content)
+    if len(content) > MAX_UPLOAD_BYTES:
+        return json.dumps(
+            {
+                "error": (
+                    f"文件过大（{len(content)} 字节），上限 {MAX_UPLOAD_BYTES}"
+                )
+            },
+            ensure_ascii=False,
+        )
+    try:
+        name = sanitize_upload_filename(filename)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+    ext = Path(name).suffix.lower()
+    if b"\x00" in content and ext not in BLOB_EXTENSIONS:
+        return json.dumps(
+            {"error": "拒绝保存二进制文件（允许 pdf/png/jpg）"},
+            ensure_ascii=False,
+        )
+
+    workspace = WORKSPACE.resolve()
+    dest_dir = (workspace / UPLOADS_DIRNAME).resolve()
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return json.dumps({"error": f"无法创建上传目录: {exc}"}, ensure_ascii=False)
+    if not dest_dir.is_relative_to(workspace):
+        return json.dumps(
+            {"error": "路径越界：只能写入 workspace/uploads/"},
+            ensure_ascii=False,
+        )
+
+    try:
+        target = _unique_upload_path(dest_dir, name).resolve()
+    except OSError as exc:
+        return json.dumps({"error": f"保存失败: {exc}"}, ensure_ascii=False)
+    if not target.is_relative_to(dest_dir):
+        return json.dumps(
+            {"error": "路径越界：只能写入 workspace/uploads/"},
+            ensure_ascii=False,
+        )
+    try:
+        target.write_bytes(content)
+    except OSError as exc:
+        return json.dumps({"error": f"写入失败: {exc}"}, ensure_ascii=False)
+    rel = target.relative_to(workspace).as_posix()
+    return json.dumps(
+        {
+            "ok": True,
+            "path": rel,
+            "filename": target.name,
+            "bytes": len(content),
+        },
         ensure_ascii=False,
     )
 

@@ -11,6 +11,7 @@ from app.tools import (
     list_dir,
     read_file,
     run_command,
+    save_upload,
     write_file,
 )
 
@@ -93,3 +94,73 @@ def test_fetch_url_rejects_localhost():
     ):
         data = _err(fetch_url(url))
         assert "error" in data, url
+
+
+def test_upload_stays_inside_uploads(tmp_ws):
+    data = _err(save_upload("foo.txt", b"hello upload"))
+    assert "error" not in data
+    assert data.get("ok") is True
+    assert data.get("path") == "uploads/foo.txt"
+    dest = (tmp_ws / "uploads" / "foo.txt").resolve()
+    uploads = (tmp_ws / "uploads").resolve()
+    assert dest.is_relative_to(uploads)
+    assert dest.is_relative_to(tmp_ws.resolve())
+    assert dest.read_bytes() == b"hello upload"
+    # sibling of uploads/ must not be created
+    assert not (tmp_ws / "foo.txt").exists()
+
+
+def test_upload_rejects_parent_filenames(tmp_ws):
+    payload = b"should not land"
+    for name in (
+        "../evil.txt",
+        "../../etc/passwd",
+        "..\\evil.txt",
+        "/etc/passwd",
+        "foo/../bar.txt",
+        "uploads/../outside.txt",
+        "../",
+        "..",
+        "foo/bar.txt",
+    ):
+        data = _err(save_upload(name, payload))
+        assert "error" in data, name
+        assert "越界" in data["error"] or "非法" in data["error"] or "禁止" in data["error"]
+    uploads = tmp_ws / "uploads"
+    if uploads.exists():
+        leftover = list(uploads.rglob("*"))
+        assert leftover == [] or all(p.is_dir() for p in leftover)
+    assert not (tmp_ws / "evil.txt").exists()
+    assert not (tmp_ws / "outside.txt").exists()
+    assert not (tmp_ws / "bar.txt").exists()
+    # nothing escaped to parent of tmp_ws
+    parent_escape = tmp_ws.parent / "evil.txt"
+    assert not parent_escape.exists() or parent_escape.read_bytes() != payload
+
+
+def test_api_upload_save_and_reject_traversal(tmp_ws):
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    client = TestClient(app)
+    ok = client.post(
+        "/api/upload",
+        files={"file": ("notes.txt", b"alpha", "text/plain")},
+    )
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    assert body.get("ok") is True
+    assert body.get("path") == "uploads/notes.txt"
+    dest = (tmp_ws / "uploads" / "notes.txt").resolve()
+    assert dest.is_relative_to((tmp_ws / "uploads").resolve())
+    assert dest.read_bytes() == b"alpha"
+
+    bad = client.post(
+        "/api/upload",
+        files={"file": ("../evil.txt", b"nope", "text/plain")},
+    )
+    assert bad.status_code == 400
+    assert not (tmp_ws / "evil.txt").exists()
+    assert not (tmp_ws.parent / "evil.txt").exists() or (
+        tmp_ws.parent / "evil.txt"
+    ).read_bytes() != b"nope"

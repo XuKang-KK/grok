@@ -1,17 +1,18 @@
-# Grok 助手（本地 v0.2）
+# Grok 助手（本地 v0.3）
 
-一个可在本机运行的 Grok 风格对话助手：浏览器里聊天，模型可以循环调用工具（搜索、读/写文件、抓取网页、记忆），直到给出最终回答。
+一个可在本机运行的 Grok 风格对话助手：浏览器里聊天，模型可以循环调用工具（搜索、读/写文件、抓取网页、记忆），直到给出最终回答。v0.3 支持把本地文件上传到 `workspace/uploads/`，并用 `./start.sh` 一键启动。
 
 - 后端：FastAPI + xAI Grok API（OpenAI 兼容 Chat Completions）
 - 前端：单页中文聊天界面（左侧多会话）
 - 工具在项目下的 `workspace/` 目录执行（本地开发沙箱，**不是**安全隔离环境）
 - 会话与记忆持久化在 `data/`（运行时自动创建，默认不入库）
+- 上传文件保存在 `workspace/uploads/`（已 gitignore）
 
 ## 获取 API Key
 
 1. 打开 [xAI Console](https://console.x.ai) 注册 / 登录
 2. 创建 API Key
-3. 复制 `.env.example` 为 `.env`，填入密钥：
+3. 复制 `.env.example` 为 `.env`（`./start.sh` 在缺失时会自动复制），填入密钥：
 
 ```bash
 cp .env.example .env
@@ -23,28 +24,44 @@ cp .env.example .env
 
 API 基址：`https://api.x.ai/v1`
 
-## 安装
+## 运行（推荐）
 
-需要 Python 3.11+。
-
-```bash
-cd grok-assistant
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-## 运行
+需要 Python 3.11+。在项目根目录执行：
 
 ```bash
 cd grok-assistant
-source venv/bin/activate
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+./start.sh
 ```
+
+`start.sh` 会：没有 venv 时创建、安装依赖、缺少 `.env` 时从 `.env.example` 复制，然后在 `127.0.0.1:8000` 启动 uvicorn。
 
 浏览器打开：http://127.0.0.1:8000
 
-也可以：`python -m app.main`
+也可以：
+
+```bash
+python -m app
+```
+
+或手动：
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+## 上传文件
+
+输入框左侧的回形针可把本地小文件上传到沙箱 `workspace/uploads/`（约 5MB 上限）。
+
+- 文本文件可随后让模型用 `read_file` 读取（路径形如 `uploads/foo.txt`）
+- `pdf` / `png` / `jpg` 仅作为二进制保存，不解析图片内容
+- 文件名中的 `../` 等路径穿越会被拒绝
+- 上传成功后界面显示芯片，并自动插入一句 `已上传 uploads/foo.txt`，发送后模型即可看到路径
+
+接口：`POST /api/upload`（multipart 字段名 `file`）
 
 ## 内置工具
 
@@ -101,6 +118,9 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 5. **抓取 https://example.com 的页面摘要**  
    模型应调用 `fetch_url`。
 
+6. **（先点回形针上传一个 txt）请读一下我刚上传的文件**  
+   模型应调用 `read_file`，路径形如 `uploads/foo.txt`。
+
 ## 运行测试
 
 ```bash
@@ -109,25 +129,28 @@ source venv/bin/activate
 pytest
 ```
 
-测试覆盖：路径穿越拦截、`write_file`/`read_file` 往返、危险命令拦截、`fetch_url` 拒绝 localhost / 内网。
+测试覆盖：路径穿越拦截、`write_file`/`read_file` 往返、危险命令拦截、`fetch_url` 拒绝 localhost / 内网、上传保存路径必须落在 `workspace/uploads/`、拒绝 `../` 文件名。
 
 ## 项目结构
 
 ```
 grok-assistant/
   README.md
+  start.sh             # 一键启动（推荐）
   requirements.txt
   pytest.ini
   .env.example
   .gitignore
-  app/main.py          # FastAPI：页面 + 会话 API + /api/chat + SSE
+  app/__main__.py      # python -m app
+  app/main.py          # FastAPI：页面 + 会话 API + 上传 + /api/chat + SSE
   app/agent.py         # Grok 工具循环
-  app/tools.py         # 搜索 / 文件 / 命令 / 抓取网页
+  app/tools.py         # 搜索 / 文件 / 命令 / 抓取网页 / 上传
   app/memory.py        # 持久记忆
   app/sessions.py      # 多会话落盘
   app/static/index.html
   tests/test_tools.py
   workspace/sample.txt # 演示用中文文本
+  workspace/uploads/   # 用户上传（已 gitignore）
   data/                # 运行时创建（已 gitignore）
 ```
 
@@ -137,3 +160,4 @@ grok-assistant/
 - **鉴权失败 / 模型不存在**：检查 key 是否有效，或把 `GROK_MODEL` 改成控制台里可用的模型。
 - **搜索为空**：DuckDuckGo 偶发限流，可换关键词重试。
 - **data/ 目录**：首次启动或首次写记忆/会话时自动创建，无需手工建目录。
+- **上传失败**：确认文件名不含 `../`，体积不超过约 5MB；二进制除 pdf/png/jpg 外会被拒绝。
