@@ -1,6 +1,6 @@
 """Multi-provider catalog and message/tool conversions.
 
-xAI and OpenAI use OpenAI-compatible Chat Completions.
+CCAPI / xAI / OpenAI use OpenAI-compatible Chat Completions.
 Anthropic uses the Messages API (not OpenAI-compatible).
 """
 
@@ -10,7 +10,7 @@ import json
 import re
 from typing import Any
 
-DEFAULT_PROVIDER = "xai"
+DEFAULT_PROVIDER = "ccapi"
 DEFAULT_IMAGE_MODEL = "grok-imagine-image-2.0"
 
 XAI_BASE_URL = "https://api.x.ai/v1"
@@ -19,9 +19,34 @@ ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 
-PROVIDER_IDS = ("xai", "openai", "anthropic")
+# Official CCAPI host (api.ccapi.us does not resolve on some networks).
+CCAPI_BASE_URL = "https://api.ccapi.ai/v1"
+CCAPI_BASE_URL_US = "https://api.ccapi.us/v1"
+CCAPI_BASE_PRESETS = (CCAPI_BASE_URL, CCAPI_BASE_URL_US)
+CCAPI_PRICING_URL = "https://ccapi.us/pricing/"
+
+PROVIDER_IDS = ("ccapi", "xai", "openai", "anthropic")
 
 PROVIDERS: dict[str, dict[str, Any]] = {
+    "ccapi": {
+        "id": "ccapi",
+        "name": "中转站",
+        "base_url": CCAPI_BASE_URL,
+        "default_model": "gpt-5.6",
+        "models": [
+            "gpt-5.6",
+            "gpt-5",
+            "claude-sonnet-5",
+            "claude-opus-5",
+            "grok-4.6",
+            "deepseek-v3.2",
+            "gemini-2.5-flash",
+        ],
+        "key_field": "ccapi_api_key",
+        "env_key": "CCAPI_API_KEY",
+        "compat": "openai",
+        "configurable_base": True,
+    },
     "xai": {
         "id": "xai",
         "name": "xAI",
@@ -78,6 +103,11 @@ def normalize_provider(value: str | None) -> str:
         "grok": "xai",
         "gpt": "openai",
         "claude": "anthropic",
+        "relay": "ccapi",
+        "zhongzhuan": "ccapi",
+        "中转站": "ccapi",
+        "ccapi.us": "ccapi",
+        "ccapi.ai": "ccapi",
     }
     if raw in aliases:
         return aliases[raw]
@@ -123,6 +153,8 @@ def catalog_payload(
                 "default_model": meta["default_model"],
                 "has_key": bool(has_api_key.get(pid)),
                 "compat": meta["compat"],
+                "base_url": meta["base_url"],
+                "configurable_base": bool(meta.get("configurable_base")),
             }
         )
     return {
@@ -130,12 +162,76 @@ def catalog_payload(
         "providers": rows,
         "provider": normalize_provider(provider),
         "model": model,
-        "has_api_key": {
-            "xai": bool(has_api_key.get("xai")),
-            "openai": bool(has_api_key.get("openai")),
-            "anthropic": bool(has_api_key.get("anthropic")),
-        },
+        "has_api_key": {pid: bool(has_api_key.get(pid)) for pid in PROVIDER_IDS},
+        "ccapi_base_url": CCAPI_BASE_URL,
+        "ccapi_base_presets": list(CCAPI_BASE_PRESETS),
     }
+
+
+def normalize_ccapi_base_url(value: str | None) -> str:
+    """Accept a host or full URL; default to the official api.ccapi.ai /v1."""
+    raw = (value or "").strip()
+    if not raw:
+        return CCAPI_BASE_URL
+    if not re.match(r"^https?://", raw, re.IGNORECASE):
+        raw = "https://" + raw
+    raw = raw.rstrip("/")
+    if not re.search(r"/v\d+[a-z]*$", raw, re.IGNORECASE):
+        raw = raw + "/v1"
+    return raw
+
+
+def parse_openai_model_ids(data: Any) -> list[str]:
+    if isinstance(data, dict):
+        items = data.get("data")
+        if items is None:
+            items = data.get("models")
+    else:
+        items = data
+    if not isinstance(items, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        mid = ""
+        if isinstance(item, dict):
+            mid = str(item.get("id") or item.get("name") or "").strip()
+        elif isinstance(item, str):
+            mid = item.strip()
+        if mid and mid not in seen:
+            out.append(mid)
+            seen.add(mid)
+    return out
+
+
+def merge_model_ids(presets: list[str], extra: list[str] | None) -> list[str]:
+    merged = list(presets)
+    seen = set(presets)
+    for mid in extra or []:
+        name = str(mid or "").strip()
+        if name and name not in seen:
+            merged.append(name)
+            seen.add(name)
+    return merged
+
+
+def fetch_ccapi_models(base_url: str, api_key: str, *, timeout: float = 8.0) -> list[str]:
+    """GET {base}/models. Never raises; returns [] on any failure. No live calls in tests."""
+    if not base_url or not api_key:
+        return []
+    url = base_url.rstrip("/") + "/models"
+    try:
+        import httpx
+
+        headers = {"Authorization": f"Bearer {api_key}"}
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            resp = client.get(url, headers=headers)
+            resp.raise_for_status()
+            payload = resp.json()
+    except Exception:
+        return []
+    return parse_openai_model_ids(payload)
+
 
 
 def openai_tools_to_anthropic(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

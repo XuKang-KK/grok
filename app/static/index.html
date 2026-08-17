@@ -185,11 +185,12 @@
     }
     .provider-tabs {
       display: flex;
+      flex-wrap: wrap;
       gap: 6px;
       padding: 0 12px 10px;
     }
     .provider-tabs button {
-      flex: 1;
+      flex: 1 1 calc(50% - 6px);
       background: rgba(255,255,255,0.04);
       color: var(--muted);
       border: 1px solid var(--line);
@@ -197,6 +198,32 @@
       padding: 6px 0;
       font-size: 11px;
       cursor: pointer;
+    }
+    .rail-base {
+      margin: 0 12px 8px;
+      font-size: 10px;
+      color: var(--muted);
+      word-break: break-all;
+      line-height: 1.4;
+    }
+    .preset-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .preset-row button {
+      flex: 1;
+      background: rgba(255,255,255,0.04);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .preset-row button:hover {
+      color: var(--gold);
+      border-color: rgba(244,197,106,0.35);
     }
     .provider-tabs button.active {
       color: var(--gold);
@@ -832,10 +859,12 @@
     <aside class="model-rail" id="modelRail" aria-label="模型" data-i18n-aria="model">
       <div class="rail-head" data-i18n="model">模型</div>
       <div class="provider-tabs" id="providerTabs">
+        <button type="button" data-provider="ccapi">中转站</button>
         <button type="button" data-provider="xai">xAI</button>
         <button type="button" data-provider="openai">OpenAI</button>
         <button type="button" data-provider="anthropic">Anthropic</button>
       </div>
+      <div class="rail-base" id="railBaseUrl"></div>
       <div class="rail-status"><span class="key-dot" id="railKeyDot"></span><span id="railKeyStatus">未保存密钥</span></div>
       <div class="model-list" id="modelList"></div>
       <div class="rail-custom">
@@ -861,6 +890,23 @@
           <button type="button" class="lang-opt" data-lang="zh">中文</button>
           <button type="button" class="lang-opt" data-lang="en">EN</button>
         </div>
+      </div>
+      <div class="field">
+        <label data-i18n="settings.ccapiKey">中转站密钥</label>
+        <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
+          <span class="key-dot" id="keyDotCcapi"></span><span id="keyStatusCcapi">未保存密钥</span>
+        </div>
+        <input type="password" id="keyInputCcapi" placeholder="已保存则留空不修改" data-i18n-placeholder="settings.keyPlaceholder" autocomplete="off" />
+        <div class="hint" data-i18n="settings.ccapiHint">OpenAI 兼容中转。到 https://ccapi.us/pricing/ 或控制台申请 token。环境变量 CCAPI_API_KEY 也可作为回退。界面永不回显。</div>
+      </div>
+      <div class="field">
+        <label data-i18n="settings.ccapiBase">中转站地址</label>
+        <input type="text" id="ccapiBaseInput" placeholder="https://api.ccapi.ai/v1" autocomplete="off" />
+        <div class="preset-row">
+          <button type="button" id="ccapiPresetAi" data-url="https://api.ccapi.ai/v1" data-i18n="settings.ccapiBaseOfficial">官方 api.ccapi.ai</button>
+          <button type="button" id="ccapiPresetUs" data-url="https://api.ccapi.us/v1" data-i18n="settings.ccapiBaseUs">用户站 api.ccapi.us</button>
+        </div>
+        <div class="hint" data-i18n="settings.ccapiBaseHint">默认 https://api.ccapi.ai/v1。也可填 https://api.ccapi.us/v1 或其它兼容基址。</div>
       </div>
       <div class="field">
         <label data-i18n="settings.xaiKey">xAI API Key</label>
@@ -1052,8 +1098,8 @@
     const backdrop = document.getElementById("backdrop");
     let busy = false;
     let sessionId = null;
-    let catalog = { providers: [], provider: "xai", model: "grok-4.6", has_api_key: {} };
-    const PROVIDER_LABEL = { xai: "xAI", openai: "OpenAI", anthropic: "Anthropic" };
+    let catalog = { providers: [], provider: "ccapi", model: "gpt-5.6", has_api_key: {} };
+    const PROVIDER_LABEL = { ccapi: "中转站", xai: "xAI", openai: "OpenAI", anthropic: "Anthropic" };
 
     function demos() {
       return [
@@ -1468,10 +1514,10 @@
     function keysFrom(data) {
       const raw = (data && data.has_api_key) || catalog.has_api_key || {};
       if (raw && typeof raw === "object") return raw;
-      return { xai: !!raw, openai: false, anthropic: false };
+      return { ccapi: !!raw, xai: false, openai: false, anthropic: false };
     }
     function currentProvider(data) {
-      return (data && data.provider) || catalog.provider || "xai";
+      return (data && data.provider) || catalog.provider || "ccapi";
     }
     function currentHasKey(data) {
       const keys = keysFrom(data);
@@ -1479,7 +1525,7 @@
     }
     function syncKeyDot(data) {
       const keys = keysFrom(data);
-      [["xai","Xai"],["openai","Openai"],["anthropic","Anthropic"]].forEach(([id, suf]) => {
+      [["ccapi","Ccapi"],["xai","Xai"],["openai","Openai"],["anthropic","Anthropic"]].forEach(([id, suf]) => {
         const dot = document.getElementById("keyDot" + suf);
         const st = document.getElementById("keyStatus" + suf);
         if (!dot || !st) return;
@@ -1498,11 +1544,20 @@
     function syncRail(data) {
       const keys = keysFrom(data);
       const provider = currentProvider(data);
-      const model = (data && data.model) || catalog.model || "grok-4.6";
+      const model = (data && data.model) || catalog.model || "gpt-5.6";
       catalog = Object.assign({}, catalog, data || {}, { has_api_key: keys, provider, model });
       document.querySelectorAll("#providerTabs button").forEach(btn => {
         btn.classList.toggle("active", btn.dataset.provider === provider);
       });
+      const baseEl = document.getElementById("railBaseUrl");
+      if (baseEl) {
+        const meta = (catalog.providers || []).find(p => p.id === provider) || {};
+        const base = (provider === "ccapi")
+          ? (catalog.ccapi_base_url || meta.base_url || "https://api.ccapi.ai/v1")
+          : (meta.base_url || "");
+        baseEl.textContent = base ? ((t("rail.baseUrl") || "基址") + " · " + base) : "";
+        baseEl.style.display = base ? "block" : "none";
+      }
       const has = !!keys[provider];
       const dot = document.getElementById("railKeyDot");
       const st = document.getElementById("railKeyStatus");
@@ -1610,12 +1665,18 @@
     async function loadSettingsPanel() {
       const res = await fetch("/api/settings");
       const data = await res.json();
-      document.getElementById("modelInput").value = data.model || "grok-4.6";
+      document.getElementById("modelInput").value = data.model || "gpt-5.6";
       document.getElementById("imageModelInput").value = data.image_model || "grok-imagine-image-2.0";
       document.getElementById("localBrowser").checked = !!data.allow_local_browser;
       document.getElementById("keyInputXai").value = "";
       document.getElementById("keyInputOpenai").value = "";
       document.getElementById("keyInputAnthropic").value = "";
+      const ccapiIn = document.getElementById("keyInputCcapi");
+      if (ccapiIn) ccapiIn.value = "";
+      const ccapiKey = document.getElementById("keyInputCcapi");
+      if (ccapiKey) ccapiKey.value = "";
+      const ccapiBase = document.getElementById("ccapiBaseInput");
+      if (ccapiBase) ccapiBase.value = data.ccapi_base_url || "https://api.ccapi.ai/v1";
       const tokIn = document.getElementById("accessTokenInput");
       if (tokIn) tokIn.value = "";
       const tokClr = document.getElementById("clearAccessToken");
@@ -1682,6 +1743,16 @@
     document.getElementById("closeSettings").addEventListener("click", closeDrawers);
     document.getElementById("closeRoutines").addEventListener("click", closeDrawers);
     drawerBackdrop.addEventListener("click", closeDrawers);
+    function bindCcapiPreset(id) {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.addEventListener("click", () => {
+        const input = document.getElementById("ccapiBaseInput");
+        if (input) input.value = btn.getAttribute("data-url") || "";
+      });
+    }
+    bindCcapiPreset("ccapiPresetAi");
+    bindCcapiPreset("ccapiPresetUs");
     document.getElementById("saveSettings").addEventListener("click", async () => {
       const body = {
         model: document.getElementById("modelInput").value.trim(),
@@ -1692,9 +1763,13 @@
       const xai = document.getElementById("keyInputXai").value;
       const oai = document.getElementById("keyInputOpenai").value;
       const ant = document.getElementById("keyInputAnthropic").value;
+      const ccapi = (document.getElementById("keyInputCcapi") || {}).value;
+      const ccapiBase = (document.getElementById("ccapiBaseInput") || {}).value;
       if (xai) body.xai_api_key = xai;
       if (oai) body.openai_api_key = oai;
       if (ant) body.anthropic_api_key = ant;
+      if (ccapi) body.ccapi_api_key = ccapi;
+      if (ccapiBase) body.ccapi_base_url = ccapiBase.trim();
       const tokEl = document.getElementById("accessTokenInput");
       const tokVal = tokEl ? tokEl.value : "";
       const clearTok = document.getElementById("clearAccessToken");
@@ -1758,7 +1833,7 @@
     document.getElementById("applyCustom").addEventListener("click", () => {
       const id = document.getElementById("customModel").value.trim();
       if (!id) return;
-      selectModel(catalog.provider || "xai", id);
+      selectModel(catalog.provider || "ccapi", id);
     });
     document.getElementById("customModel").addEventListener("keydown", (e) => {
       if (e.key === "Enter") {

@@ -1,4 +1,4 @@
-"""xAI / OpenAI-compatible image generation -> workspace/generated/."""
+"""xAI / CCAPI OpenAI-compatible image generation -> workspace/generated/."""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ import time
 from pathlib import Path
 
 import httpx
+from openai import OpenAI
 
-from app.settings import get_image_model
+from app.settings import get_api_key, get_ccapi_base_url, get_image_model, get_provider
 from app.tools import WORKSPACE
 
 GENERATED_DIRNAME = "generated"
@@ -23,23 +24,7 @@ def _slug(text: str) -> str:
     return text
 
 
-def generate_image(prompt: str) -> str:
-    prompt = (prompt or "").strip()
-    if not prompt:
-        return json.dumps({"error": "prompt 不能为空"}, ensure_ascii=False)
-    if len(prompt) > MAX_PROMPT:
-        return json.dumps(
-            {"error": f"prompt 过长（{len(prompt)}），上限 {MAX_PROMPT}"},
-            ensure_ascii=False,
-        )
-    from app.agent import make_xai_client
-
-    try:
-        client = make_xai_client()
-    except RuntimeError as exc:
-        return json.dumps({"error": str(exc)}, ensure_ascii=False)
-
-    model = get_image_model()
+def _generate_with_client(client: OpenAI, model: str, prompt: str) -> tuple[bytes | None, str | None]:
     raw: bytes | None = None
     last_err = None
     try:
@@ -64,11 +49,68 @@ def generate_image(prompt: str) -> str:
                 raw = r.content
         except Exception as exc2:  # noqa: BLE001
             last_err = f"{last_err}; fallback: {type(exc2).__name__}: {exc2}"
+    return raw, last_err
+
+
+def _xai_client() -> OpenAI:
+    from app.agent import make_xai_client
+
+    return make_xai_client()
+
+
+def generate_image(prompt: str) -> str:
+    prompt = (prompt or "").strip()
+    if not prompt:
+        return json.dumps({"error": "prompt 不能为空"}, ensure_ascii=False)
+    if len(prompt) > MAX_PROMPT:
+        return json.dumps(
+            {"error": f"prompt 过长（{len(prompt)}），上限 {MAX_PROMPT}"},
+            ensure_ascii=False,
+        )
+
+    model = get_image_model()
+    raw: bytes | None = None
+    last_err = None
+    errors: list[str] = []
+
+    pid = get_provider()
+    if pid == "ccapi":
+        key = get_api_key("ccapi")
+        if key:
+            try:
+                client = OpenAI(api_key=key, base_url=get_ccapi_base_url(), timeout=90.0)
+                raw, last_err = _generate_with_client(client, model, prompt)
+                if last_err:
+                    errors.append(f"中转站: {last_err}")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"中转站: {type(exc).__name__}: {exc}")
+        if not raw and get_api_key("xai"):
+            try:
+                raw, last_err = _generate_with_client(_xai_client(), model, prompt)
+                if last_err:
+                    errors.append(f"xAI: {last_err}")
+            except RuntimeError as exc:
+                errors.append(str(exc))
+        if not raw and not get_api_key("ccapi") and not get_api_key("xai"):
+            return json.dumps(
+                {
+                    "error": "图像生成需要中转站或 xAI 密钥。请在设置中填写，或写入 data/settings.json / .env。",
+                    "model": model,
+                },
+                ensure_ascii=False,
+            )
+    else:
+        try:
+            raw, last_err = _generate_with_client(_xai_client(), model, prompt)
+            if last_err:
+                errors.append(last_err)
+        except RuntimeError as exc:
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
     if not raw:
         return json.dumps(
             {
-                "error": last_err or "图像生成失败",
+                "error": "；".join(errors) or last_err or "图像生成失败",
                 "model": model,
             },
             ensure_ascii=False,

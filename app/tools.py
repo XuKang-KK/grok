@@ -1045,7 +1045,7 @@ _EXTRA_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "generate_image",
             "description": (
-                "根据文字提示用 xAI 图像接口生成一张图片，"
+                "根据文字提示生成一张图片（中转站走其 /images/generations，否则走 xAI），"
                 "保存到 workspace/generated/ 并返回可在对话中展示的路径。"
             ),
             "parameters": {

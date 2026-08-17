@@ -20,6 +20,8 @@ def _isolate(tmp_path, monkeypatch) -> None:
         "XAI_API_KEY",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
+        "CCAPI_API_KEY",
+        "CCAPI_BASE_URL",
         "KK_ACCESS_TOKEN",
         "ACCESS_TOKEN",
         "HOST",

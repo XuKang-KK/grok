@@ -17,7 +17,7 @@ from app.providers import (
     normalize_provider,
     provider_meta,
 )
-from app.settings import get_api_key, get_model, get_provider
+from app.settings import get_api_key, get_model, get_provider, get_provider_base_url
 from app.tools import (
     classify_command,
     execute_tool,
@@ -43,7 +43,7 @@ SYSTEM_PROMPT = """你是一个运行在用户本机上的 KK AI助手。请用�
 - memory_write：把用户偏好、姓名、长期事实写入持久记忆（跨会话保留）。
 - memory_read：检索已保存的记忆；query 为空则返回最近条目。
 - browser_open / browser_snapshot / browser_click / browser_type / browser_screenshot：用 Chromium 浏览公开网页。先 open，再 snapshot 获取 ref，然后 click/type。
-- generate_image：根据文字生成图片，保存到 workspace/generated/（始终走 xAI 图像接口）。
+- generate_image：根据文字生成图片，保存到 workspace/generated/（中转站优先走其 /images/generations，否则走 xAI）。
 - delegate_task：把可拆开的子任务交给子助手（子助手不能再委派）。
 - 以及用户在 data/mcp.json 里启用的 MCP 工具。
 
@@ -103,7 +103,7 @@ def make_client(provider: str | None = None) -> OpenAI:
     key = get_api_key(pid)
     if not key:
         raise RuntimeError(missing_key_message(pid))
-    return OpenAI(api_key=key, base_url=str(meta["base_url"]), timeout=90.0)
+    return OpenAI(api_key=key, base_url=get_provider_base_url(pid), timeout=90.0)
 
 
 def _assistant_message_dict(message: Any) -> dict[str, Any]:

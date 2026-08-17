@@ -104,6 +104,8 @@ def test_settings_do_not_leak_key(tmp_path, monkeypatch):
     monkeypatch.setattr("app.settings.SETTINGS_FILE", tmp_path / "settings.json")
     monkeypatch.setattr("app.settings.DATA_DIR", tmp_path)
     monkeypatch.delenv("XAI_API_KEY", raising=False)
+    monkeypatch.delenv("CCAPI_API_KEY", raising=False)
+    monkeypatch.delenv("CCAPI_BASE_URL", raising=False)
     save_settings({"xai_api_key": "xai-super-secret-key", "grok_model": "grok-4.6"})
     pub = public_settings()
     dumped = json.dumps(pub)

@@ -10,12 +10,17 @@ from typing import Any
 from dotenv import load_dotenv
 
 from app.providers import (
+    CCAPI_BASE_PRESETS,
+    CCAPI_BASE_URL,
     DEFAULT_IMAGE_MODEL,
     DEFAULT_PROVIDER,
     PROVIDER_IDS,
     PROVIDERS,
     catalog_payload,
     default_model_for,
+    fetch_ccapi_models,
+    merge_model_ids,
+    normalize_ccapi_base_url,
     normalize_provider,
 )
 
@@ -26,8 +31,10 @@ ENV_FILE = PROJECT_ROOT / ".env"
 
 DEFAULT_MODEL = default_model_for(DEFAULT_PROVIDER)
 
-_SECRET_KEYS = frozenset({"xai_api_key", "openai_api_key", "anthropic_api_key", "access_token"})
-_STR_KEYS = frozenset({"provider", "model", "grok_model", "image_model", "language"})
+_SECRET_KEYS = frozenset(
+    {"xai_api_key", "openai_api_key", "anthropic_api_key", "ccapi_api_key", "access_token"}
+)
+_STR_KEYS = frozenset({"provider", "model", "grok_model", "image_model", "language", "ccapi_base_url"})
 
 
 def _ensure_data_dir() -> None:
@@ -67,6 +74,10 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
         elif key == "language":
             raw = str(value or "").strip().lower().replace("_", "-")
             current[key] = "en" if raw in {"en", "en-us", "en-gb", "english"} else "zh"
+        elif key == "ccapi_base_url":
+            raw = str(value or "").strip()
+            if raw:
+                current[key] = normalize_ccapi_base_url(raw)
         elif key in _STR_KEYS:
             current[key] = str(value).strip()
         elif key == "allow_local_browser":
@@ -133,6 +144,21 @@ def get_image_model() -> str:
     )
 
 
+def get_ccapi_base_url() -> str:
+    """Configured CCAPI base. Settings override env. Never a secret."""
+    data = load_settings()
+    stored = str(data.get("ccapi_base_url") or "").strip()
+    env = (os.getenv("CCAPI_BASE_URL") or "").strip()
+    return normalize_ccapi_base_url(stored or env or CCAPI_BASE_URL)
+
+
+def get_provider_base_url(provider: str | None = None) -> str:
+    pid = normalize_provider(provider) if provider else get_provider()
+    if pid == "ccapi":
+        return get_ccapi_base_url()
+    return str(PROVIDERS[pid]["base_url"])
+
+
 def get_language() -> str:
     data = load_settings()
     raw = str(data.get("language") or "").strip().lower()
@@ -167,16 +193,42 @@ def public_settings() -> dict[str, Any]:
         "language": get_language(),
         "has_access_token": bool(get_access_token()),
         "auth_required": bool(get_access_token()),
+        "ccapi_base_url": get_ccapi_base_url(),
+        "ccapi_base_presets": list(CCAPI_BASE_PRESETS),
     }
+
+
+def _skip_remote_model_fetch() -> bool:
+    """Unit tests must never hit the live CCAPI network."""
+    import sys
+
+    return "pytest" in sys.modules
 
 
 def models_catalog() -> dict[str, Any]:
     pub = public_settings()
-    return catalog_payload(
+    payload = catalog_payload(
         has_api_key=pub["has_api_key"],
         provider=pub["provider"],
         model=pub["model"],
     )
+    base = get_ccapi_base_url()
+    payload["ccapi_base_url"] = base
+    payload["ccapi_base_presets"] = list(CCAPI_BASE_PRESETS)
+    extra: list[str] = []
+    if not _skip_remote_model_fetch() and get_api_key("ccapi"):
+        extra = fetch_ccapi_models(base, get_api_key("ccapi"), timeout=8.0)
+    for row in payload.get("providers") or []:
+        if not isinstance(row, dict):
+            continue
+        pid = row.get("id")
+        if pid == "ccapi":
+            row["base_url"] = base
+            row["base_presets"] = list(CCAPI_BASE_PRESETS)
+            row["models"] = merge_model_ids(list(row.get("models") or []), extra)
+        elif pid in PROVIDERS:
+            row["base_url"] = PROVIDERS[pid]["base_url"]
+    return payload
 
 
 def strip_secrets(payload: dict[str, Any]) -> dict[str, Any]:
@@ -184,6 +236,7 @@ def strip_secrets(payload: dict[str, Any]) -> dict[str, Any]:
         "xai_api_key",
         "openai_api_key",
         "anthropic_api_key",
+        "ccapi_api_key",
         "api_key",
         "key",
         "access_token",

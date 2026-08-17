@@ -1,8 +1,8 @@
-# KK AI助手（本地 v1.2.1）
+# KK AI助手（本地 v1.3.0）
 
-一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.2.1 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文；右侧模型选择器支持 xAI / OpenAI / Anthropic。
+一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.3.0 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文；右侧模型选择器默认「中转站」（CCAPI），也可切 xAI / OpenAI / Anthropic。
 
-- 后端：FastAPI；xAI / OpenAI 走 OpenAI 兼容 Chat Completions，Anthropic 走 Messages API + 工具循环（默认 `grok-4.6`）
+- 后端：FastAPI；中转站 / xAI / OpenAI 走 OpenAI 兼容 Chat Completions，Anthropic 走 Messages API + 工具循环（新安装默认中转站 `gpt-5.6`）
 - 前端：单页中文深色聊天界面（左侧多会话，右侧「模型」面板，设置 / 例程抽屉）
 - 工具在项目下的 `workspace/` 目录执行（本地开发沙箱，**不是**安全隔离环境）
 - 会话、记忆、设置、例程持久化在 `data/`（已 gitignore，切勿提交密钥）
@@ -10,34 +10,37 @@
 
 ## 获取 API Key（多提供商）
 
-支持三个提供商，聊天对话框**右侧「模型」面板**可切换，对下一条消息生效（同时写入当前会话和默认设置）。
+支持四个提供商，聊天对话框**右侧「模型」面板**可切换（**中转站**排在第一位），对下一条消息生效（同时写入当前会话和默认设置）。新安装默认提供商是 **中转站（ccapi）**；若 `data/settings.json` 里已经保存了 xai / openai / anthropic，则继续用已保存的选择。
 
 | 提供商 | 基址 | 预置模型 |
 |--------|------|----------|
-| **xAI** | `https://api.x.ai/v1`（OpenAI 兼容） | `grok-4.6`（默认）、`grok-4.5` |
+| **中转站** | 可配置，默认 `https://api.ccapi.ai/v1`（OpenAI 兼容）。设置里可一键切到 `https://api.ccapi.us/v1` | `gpt-5.6`（默认）、`gpt-5`、`claude-sonnet-5`、`claude-opus-5`、`grok-4.6`、`deepseek-v3.2`、`gemini-2.5-flash` |
+| **xAI** | `https://api.x.ai/v1`（OpenAI 兼容） | `grok-4.6`、`grok-4.5` |
 | **OpenAI** | `https://api.openai.com/v1`（OpenAI SDK + tools） | `gpt-5.6`、`gpt-5`、`gpt-5-mini`、`gpt-5-chat-latest` |
 | **Anthropic** | `https://api.anthropic.com`（Messages API + tools，**不**兼容 OpenAI） | `claude-opus-5`、`claude-sonnet-5`、`claude-fable-5`、`claude-haiku-4-5` |
 
-右侧面板也可以输入自定义模型 id（仍走当前提供商）。
+右侧面板也可以输入自定义模型 id（仍走当前提供商）。中转站的模型 id 以 [CCAPI 价格页](https://ccapi.us/pricing/) 为准，例如 `gpt-5.6`、`claude-sonnet-5`，或带厂商前缀的 `openai/gpt-5.2`。已保存中转站密钥时，`GET /api/models` 会尝试拉取 `{base}/models` 并与预置列表去重合并；失败则只显示预置，不会拖垮应用。
 
-密钥按提供商分别保存在 gitignored 的 `data/settings.json`：`xai_api_key` / `openai_api_key` / `anthropic_api_key`。环境变量 `XAI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 作为回退。设置抽屉可分别粘贴三个密钥；已保存则留空不修改。界面**永不回显**密钥。
+密钥按提供商分别保存在 gitignored 的 `data/settings.json`：`ccapi_api_key` / `xai_api_key` / `openai_api_key` / `anthropic_api_key`。环境变量 `CCAPI_API_KEY` / `XAI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 作为回退。中转站基址写在 `ccapi_base_url` / `CCAPI_BASE_URL`。设置抽屉可分别粘贴密钥和中转站地址；已保存密钥则留空不修改。界面**永不回显**密钥。
 
-1. 到对应控制台申请密钥：[xAI](https://console.x.ai) / [OpenAI](https://platform.openai.com) / [Anthropic](https://console.anthropic.com)
-2. 任选其一（**无需重启**）：
+1. **中转站（推荐）**：打开 [https://ccapi.us/pricing/](https://ccapi.us/pricing/) 或 CCAPI 控制台，复制 token。设置里填「中转站密钥」，地址默认 `https://api.ccapi.ai/v1`。
+2. 或到对应控制台申请直连密钥：[xAI](https://console.x.ai) / [OpenAI](https://platform.openai.com) / [Anthropic](https://console.anthropic.com)
+3. 任选其一（**无需重启**）：
    - 启动后点右上角「设置」，填入对应提供商密钥并保存
    - 或复制 `.env.example` 为 `.env` 后填入
 
 ```bash
 cp .env.example .env
+# CCAPI_API_KEY=...
+# CCAPI_BASE_URL=https://api.ccapi.ai/v1
 # XAI_API_KEY=xai-...
 # OPENAI_API_KEY=sk-...
 # ANTHROPIC_API_KEY=sk-ant-...
-# GROK_MODEL=grok-4.6
 ```
 
-当前选中的提供商没有密钥时，聊天接口返回 **503**，中文错误会点名该提供商。
+当前选中的提供商没有密钥时，聊天接口返回 **503**，中文错误会点名该提供商（中转站会写「中转站」）。
 
-图像生成仍只走 xAI（`POST /v1/images/generations`，默认 `grok-imagine-image-2.0`）。当前对话不是 xAI 时，只要已保存 xAI 密钥仍可生图。
+图像生成：当前提供商是中转站时，先走同一基址的 `/images/generations`（用中转站密钥）。失败或未配置时，若已保存 xAI 密钥则回退 xAI（默认 `grok-imagine-image-2.0`）。
 
 ## 运行（推荐）
 
@@ -129,7 +132,7 @@ Cron 为 5 段：`分 时 日 月 周`，例如每天 9:00：`0 9 * * *`。
 ## 子助手与生图
 
 - `delegate_task(goal, context)`：嵌套工具循环，最多 5 轮，**不能再委派**，并发上限 2。界面工具芯片带「子助手」。
-- `generate_image(prompt)`：调用 xAI ` /images/generations`（`grok-imagine-image-2.0`，优先 `b64_json`），保存到 `workspace/generated/`，对话中展示。
+- `generate_image(prompt)`：中转站优先走其 `/images/generations`；否则调用 xAI（`grok-imagine-image-2.0`，优先 `b64_json`），保存到 `workspace/generated/`，对话中展示。
 
 ## 内置工具
 
@@ -141,7 +144,7 @@ Cron 为 5 段：`分 时 日 月 周`，例如每天 9:00：`0 9 * * *`。
 | `run_command` | workspace shell；硬拦截 + 中风险批准 |
 | `memory_write` / `memory_read` | `data/memory.json` |
 | `browser_*` | Playwright Chromium |
-| `generate_image` | xAI 图像生成 |
+| `generate_image` | 中转站或 xAI 图像生成 |
 | `delegate_task` | 子助手 |
 | `mcp_*` | 来自 `data/mcp.json` 的动态工具 |
 
@@ -170,7 +173,7 @@ source venv/bin/activate
 pytest
 ```
 
-覆盖：路径穿越、危险命令硬拦截、中风险分类、`fetch_url` / 浏览器 URL 封锁、上传路径、cron 解析、子助手不能递归、设置接口不泄露密钥、MCP 示例配置可干净加载、三家提供商目录与预置模型 id、缺 OpenAI/Anthropic 密钥时的中文 503、i18n 中英文字典、语言设置默认中文、无口令时 API 仍开放、有口令时 chat/settings 先 401 再带 header 通过。
+覆盖：路径穿越、危险命令硬拦截、中风险分类、`fetch_url` / 浏览器 URL 封锁、上传路径、cron 解析、子助手不能递归、设置接口不泄露密钥、MCP 示例配置可干净加载、四家提供商目录与预置模型 id（含中转站）、缺中转站/OpenAI/Anthropic 密钥时的中文 503、i18n 中英文字典、语言设置默认中文、无口令时 API 仍开放、有口令时 chat/settings 先 401 再带 header 通过。单元测试不访问真实 CCAPI 网络。
 
 ## 项目结构
 
@@ -187,7 +190,7 @@ grok-assistant/
   app/anthropic_agent.py # Anthropic Messages 工具循环
   app/providers.py     # 提供商目录与消息转换
   app/tools.py         # 沙箱工具 + 动态 schema
-  app/settings.py      # data/settings.json（每请求重读，三把密钥）
+  app/settings.py      # data/settings.json（每请求重读，含中转站密钥与基址）
   app/approvals.py     # 中风险命令批准
   app/browser.py       # Playwright
   app/mcp_client.py    # stdio JSON-RPC MCP 客户端
@@ -211,7 +214,7 @@ grok-assistant/
 
 本仓库**不能**替你完成这些事（也没有假装已经完成）：
 
-1. **API 密钥**：到 xAI / OpenAI / Anthropic 控制台申请，写入设置或 `.env`。我们没有、也不会去填你的密钥。
+1. **API 密钥**：到 [CCAPI](https://ccapi.us/pricing/) 申请中转站 token，或到 xAI / OpenAI / Anthropic 控制台申请直连密钥，写入设置或 `.env`。我们没有、也不会去填你的密钥。
 2. **局域网 / 手机访问**：默认只监听 `127.0.0.1`。手机要连这台电脑，请自己设 `HOST=0.0.0.0`，并设置 `KK_ACCESS_TOKEN`（或网页设置里的访问口令）。
 3. **PWA 在局域网用 HTTPS**：浏览器要求安全上下文才能完整「添加到主屏幕」。请自己用 Caddy / nginx 反代并配证书（内网可用 mkcert）。本仓库不代签证书。
 4. **Apple / Windows 签名与上架**：需要付费的 Apple Developer、Windows Authenticode / 商店账号。这里只有未签名的 Electron 打包脚本，不会代你签名或上架。

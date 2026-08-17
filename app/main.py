@@ -102,6 +102,8 @@ class SettingsUpdate(BaseModel):
     xai_api_key: str | None = None
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    ccapi_api_key: str | None = None
+    ccapi_base_url: str | None = None
     provider: str | None = None
     model: str | None = None
     grok_model: str | None = None
@@ -263,6 +265,10 @@ async def put_settings(req: SettingsUpdate) -> dict[str, Any]:
         updates["openai_api_key"] = req.openai_api_key
     if req.anthropic_api_key is not None:
         updates["anthropic_api_key"] = req.anthropic_api_key
+    if req.ccapi_api_key is not None:
+        updates["ccapi_api_key"] = req.ccapi_api_key
+    if req.ccapi_base_url is not None:
+        updates["ccapi_base_url"] = req.ccapi_base_url
     if req.provider is not None:
         updates["provider"] = normalize_provider(req.provider)
     if req.model is not None:
