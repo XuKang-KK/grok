@@ -45,6 +45,8 @@ class Session:
         self.messages: list[dict[str, Any]] = list(data.get("messages") or [])
         self.ui_turns: list[dict[str, Any]] = list(data.get("ui_turns") or [])
         self.pending_images: list[dict[str, Any]] = list(data.get("pending_images") or [])
+        self.provider: str = str(data.get("provider") or "")
+        self.model: str = str(data.get("model") or "")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +57,8 @@ class Session:
             "messages": self.messages,
             "ui_turns": self.ui_turns,
             "pending_images": self.pending_images,
+            "provider": self.provider,
+            "model": self.model,
         }
 
     def meta(self) -> dict[str, Any]:
@@ -69,6 +73,8 @@ class Session:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "preview": preview,
+            "provider": self.provider,
+            "model": self.model,
         }
 
     def refresh_system_prompt(self) -> None:
@@ -85,6 +91,10 @@ class Session:
         self.ui_turns = []
         self.pending_images = []
         self.title = "新对话"
+        from app.settings import get_model, get_provider
+
+        self.provider = get_provider()
+        self.model = get_model(self.provider)
         self.updated_at = _now()
 
     def attach_pending_image(self, path: str, mime: str, filename: str) -> None:
@@ -188,6 +198,9 @@ class SessionStore:
     def create(self, title: str = "新对话") -> Session:
         ensure_dirs()
         sid = uuid.uuid4().hex
+        from app.settings import get_model, get_provider
+
+        provider = get_provider()
         sess = Session(
             {
                 "id": sid,
@@ -196,6 +209,8 @@ class SessionStore:
                 "updated_at": _now(),
                 "messages": new_system_messages(),
                 "ui_turns": [],
+                "provider": provider,
+                "model": get_model(provider),
             }
         )
         self.save(sess)

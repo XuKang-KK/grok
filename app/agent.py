@@ -1,4 +1,4 @@
-"""Grok tool-calling loop via OpenAI-compatible chat completions."""
+"""Provider-routed tool-calling loop (OpenAI-compatible + Anthropic Messages)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,14 @@ from typing import Any
 from openai import APIError, AuthenticationError, OpenAI, RateLimitError
 
 from app.approvals import APPROVAL_TIMEOUT_SEC, store as approval_store
-from app.settings import get_api_key, get_model
+from app.providers import (
+    DEFAULT_PROVIDER,
+    XAI_BASE_URL,
+    missing_key_message,
+    normalize_provider,
+    provider_meta,
+)
+from app.settings import get_api_key, get_model, get_provider
 from app.tools import (
     classify_command,
     execute_tool,
@@ -23,7 +30,6 @@ DEFAULT_MODEL = "grok-4.6"
 MAX_TOOL_ITERS = 8
 MAX_SUBAGENT_ITERS = 5
 SUBAGENT_CONCURRENCY = 2
-XAI_BASE_URL = "https://api.x.ai/v1"
 
 SYSTEM_PROMPT = """你是一个运行在用户本机上的 Grok 风格助手。请用简体中文回答，除非用户使用其他语言。
 
@@ -37,7 +43,7 @@ SYSTEM_PROMPT = """你是一个运行在用户本机上的 Grok 风格助手。�
 - memory_write：把用户偏好、姓名、长期事实写入持久记忆（跨会话保留）。
 - memory_read：检索已保存的记忆；query 为空则返回最近条目。
 - browser_open / browser_snapshot / browser_click / browser_type / browser_screenshot：用 Chromium 浏览公开网页。先 open，再 snapshot 获取 ref，然后 click/type。
-- generate_image：根据文字生成图片，保存到 workspace/generated/。
+- generate_image：根据文字生成图片，保存到 workspace/generated/（始终走 xAI 图像接口）。
 - delegate_task：把可拆开的子任务交给子助手（子助手不能再委派）。
 - 以及用户在 data/mcp.json 里启用的 MCP 工具。
 
@@ -80,13 +86,24 @@ def build_system_prompt(*, subagent: bool = False) -> str:
     )
 
 
-def make_client() -> OpenAI:
-    key = get_api_key()
+def make_xai_client() -> OpenAI:
+    key = get_api_key("xai")
     if not key:
         raise RuntimeError(
-            "未配置 XAI_API_KEY。请在设置面板填写，或写入 data/settings.json / .env。"
+            "图像生成需要 xAI 密钥。请在设置中填写 XAI_API_KEY，或写入 data/settings.json / .env。"
         )
     return OpenAI(api_key=key, base_url=XAI_BASE_URL, timeout=90.0)
+
+
+def make_client(provider: str | None = None) -> OpenAI:
+    pid = normalize_provider(provider or getattr(_tls, "provider", None) or get_provider())
+    meta = provider_meta(pid)
+    if meta["compat"] != "openai":
+        raise RuntimeError(f"{meta['name']} 不使用 OpenAI 兼容客户端")
+    key = get_api_key(pid)
+    if not key:
+        raise RuntimeError(missing_key_message(pid))
+    return OpenAI(api_key=key, base_url=str(meta["base_url"]), timeout=90.0)
 
 
 def _assistant_message_dict(message: Any) -> dict[str, Any]:
@@ -165,6 +182,8 @@ def _run_subagent(goal: str, context: str = "") -> Iterator[dict[str, Any]]:
             allow_delegate=False,
             source="subagent",
             auto_deny_approvals=True,
+            provider=getattr(_tls, "provider", None),
+            model=getattr(_tls, "model", None),
         ):
             if event.get("type") == "message":
                 reply = event.get("content") or ""
@@ -188,40 +207,177 @@ def _run_subagent(goal: str, context: str = "") -> Iterator[dict[str, Any]]:
     }
 
 
-def run_turn(
-    messages: list[dict[str, Any]],
+def run_one_tool(
+    name: str,
+    args_obj: dict[str, Any],
+    args_json: str,
     *,
-    max_iters: int | None = None,
-    allow_delegate: bool = True,
     source: str = "",
+    allow_delegate: bool = True,
     auto_deny_approvals: bool = False,
 ) -> Iterator[dict[str, Any]]:
-    """Execute one user turn. `messages` is mutated in place (OpenAI history).
+    """Execute one tool call. Yields UI events; last `_tool_result` has the payload."""
+    yield {
+        "type": "tool_start",
+        "name": name,
+        "label": _label(name, source),
+        "args_summary": summarize_args(name, args_obj),
+        "source": source or "main",
+    }
 
-    Yields event dicts:
-      {"type": "tool_start", ...}
-      {"type": "tool_end", ...}
-      {"type": "approval_required", ...}
-      {"type": "message", "content": "..."}
-      {"type": "error", "message": "..."}
-    """
-    try:
-        client = make_client()
-    except RuntimeError as exc:
-        yield {"type": "error", "message": str(exc)}
+    if name == "delegate_task":
+        if not allow_delegate or getattr(_tls, "in_subagent", False):
+            result = json.dumps(
+                {"error": "子助手不能再委派任务"},
+                ensure_ascii=False,
+            )
+            yield {
+                "type": "tool_end",
+                "name": name,
+                "label": "子助手",
+                "args_summary": summarize_args(name, args_obj),
+                "ok": False,
+                "summary": "子助手不能再委派任务",
+                "source": source or "main",
+            }
+            yield {"type": "_tool_result", "result": result}
+            return
+        nested_result = json.dumps(
+            {"error": "子助手没有返回"},
+            ensure_ascii=False,
+        )
+        for ev in _run_subagent(
+            str(args_obj.get("goal") or ""),
+            str(args_obj.get("context") or ""),
+        ):
+            if ev.get("type") == "_delegate_result":
+                nested_result = ev.get("result") or nested_result
+                continue
+            yield ev
+        ok = True
+        try:
+            parsed = json.loads(nested_result)
+            if isinstance(parsed, dict) and parsed.get("error") and not parsed.get("reply"):
+                ok = False
+        except json.JSONDecodeError:
+            pass
+        yield {
+            "type": "tool_end",
+            "name": name,
+            "label": "子助手",
+            "args_summary": summarize_args(name, args_obj),
+            "ok": ok,
+            "summary": "子助手已完成" if ok else "子助手失败",
+            "source": source or "main",
+        }
+        yield {"type": "_tool_result", "result": nested_result}
         return
 
-    model = get_model()
-    tools = get_tool_schemas(allow_delegate=allow_delegate)
-    limit = max_iters if max_iters is not None else MAX_TOOL_ITERS
+    if name == "run_command":
+        level, reason = classify_command(str(args_obj.get("command") or ""))
+        if level == "deny":
+            result = json.dumps(
+                {"error": reason, "blocked": True},
+                ensure_ascii=False,
+            )
+            yield {
+                "type": "tool_end",
+                "name": name,
+                "label": _label(name, source),
+                "args_summary": summarize_args(name, args_obj),
+                "ok": False,
+                "summary": f"失败：{reason[:80]}",
+                "source": source or "main",
+            }
+            yield {"type": "_tool_result", "result": result}
+            return
+        if level == "approve":
+            if auto_deny_approvals:
+                result = json.dumps(
+                    {
+                        "error": "中风险命令未获批准（非交互环境已默认拒绝）",
+                        "blocked": True,
+                        "denied": True,
+                    },
+                    ensure_ascii=False,
+                )
+                yield {
+                    "type": "tool_end",
+                    "name": name,
+                    "label": _label(name, source),
+                    "args_summary": summarize_args(name, args_obj),
+                    "ok": False,
+                    "summary": "未获批准，已拒绝",
+                    "source": source or "main",
+                }
+                yield {"type": "_tool_result", "result": result}
+                return
+            rec = approval_store.create(
+                str(args_obj.get("command") or ""),
+                reason,
+            )
+            yield {
+                "type": "approval_required",
+                **rec.to_event(),
+            }
+            approved = rec.wait(APPROVAL_TIMEOUT_SEC)
+            if not approved:
+                result = json.dumps(
+                    {
+                        "error": "用户拒绝或等待超时，命令未执行",
+                        "blocked": True,
+                        "denied": True,
+                    },
+                    ensure_ascii=False,
+                )
+                yield {
+                    "type": "tool_end",
+                    "name": name,
+                    "label": _label(name, source),
+                    "args_summary": summarize_args(name, args_obj),
+                    "ok": False,
+                    "summary": "用户拒绝或超时",
+                    "source": source or "main",
+                }
+                yield {"type": "_tool_result", "result": result}
+                return
 
-    prompt = build_system_prompt(subagent=(source == "subagent"))
+    result, ui = execute_tool(name, args_json)
+    ui["label"] = _label(name, source)
+    ui["source"] = source or "main"
+    yield {"type": "tool_end", **ui}
+    yield {"type": "_tool_result", "result": result}
+
+
+def _ensure_system_prompt(messages: list[dict[str, Any]], *, subagent: bool) -> None:
+    prompt = build_system_prompt(subagent=subagent)
     if messages and messages[0].get("role") == "system":
         messages[0]["content"] = prompt
     else:
         messages.insert(0, {"role": "system", "content": prompt})
 
-    for _step in range(limit):
+
+def _openai_compatible_turn(
+    messages: list[dict[str, Any]],
+    *,
+    provider: str,
+    model: str,
+    max_iters: int,
+    allow_delegate: bool,
+    source: str,
+    auto_deny_approvals: bool,
+) -> Iterator[dict[str, Any]]:
+    meta = provider_meta(provider)
+    try:
+        client = make_client(provider)
+    except RuntimeError as exc:
+        yield {"type": "error", "message": str(exc)}
+        return
+
+    tools = get_tool_schemas(allow_delegate=allow_delegate)
+    _ensure_system_prompt(messages, subagent=(source == "subagent"))
+
+    for _step in range(max_iters):
         try:
             resp = client.chat.completions.create(
                 model=model,
@@ -232,13 +388,13 @@ def run_turn(
         except AuthenticationError:
             yield {
                 "type": "error",
-                "message": "xAI API 鉴权失败。请检查设置中的 XAI_API_KEY 是否有效。",
+                "message": f"{meta['name']} API 鉴权失败。请检查设置中的 {meta['env_key']} 是否有效。",
             }
             return
         except RateLimitError:
             yield {
                 "type": "error",
-                "message": "xAI API 触发限流，请稍后再试。",
+                "message": f"{meta['name']} API 触发限流，请稍后再试。",
             }
             return
         except APIError as exc:
@@ -262,165 +418,19 @@ def run_turn(
                 name = tc.function.name
                 args_json = tc.function.arguments or "{}"
                 args_obj = _parse_args(args_json)
-                yield {
-                    "type": "tool_start",
-                    "name": name,
-                    "label": _label(name, source),
-                    "args_summary": summarize_args(name, args_obj),
-                    "source": source or "main",
-                }
-
-                if name == "delegate_task":
-                    if not allow_delegate or getattr(_tls, "in_subagent", False):
-                        result = json.dumps(
-                            {"error": "子助手不能再委派任务"},
-                            ensure_ascii=False,
-                        )
-                        ui = {
-                            "name": name,
-                            "label": "子助手",
-                            "args_summary": summarize_args(name, args_obj),
-                            "ok": False,
-                            "summary": "子助手不能再委派任务",
-                            "source": source or "main",
-                        }
-                        yield {"type": "tool_end", **ui}
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": result,
-                            }
-                        )
+                result = json.dumps({"error": "工具未返回"}, ensure_ascii=False)
+                for ev in run_one_tool(
+                    name,
+                    args_obj,
+                    args_json,
+                    source=source,
+                    allow_delegate=allow_delegate,
+                    auto_deny_approvals=auto_deny_approvals,
+                ):
+                    if ev.get("type") == "_tool_result":
+                        result = ev.get("result") or result
                         continue
-                    nested_result = json.dumps(
-                        {"error": "子助手没有返回"},
-                        ensure_ascii=False,
-                    )
-                    for ev in _run_subagent(
-                        str(args_obj.get("goal") or ""),
-                        str(args_obj.get("context") or ""),
-                    ):
-                        if ev.get("type") == "_delegate_result":
-                            nested_result = ev.get("result") or nested_result
-                            continue
-                        yield ev
-                    ok = True
-                    try:
-                        parsed = json.loads(nested_result)
-                        if isinstance(parsed, dict) and parsed.get("error") and not parsed.get("reply"):
-                            ok = False
-                    except json.JSONDecodeError:
-                        pass
-                    yield {
-                        "type": "tool_end",
-                        "name": name,
-                        "label": "子助手",
-                        "args_summary": summarize_args(name, args_obj),
-                        "ok": ok,
-                        "summary": "子助手已完成" if ok else "子助手失败",
-                        "source": source or "main",
-                    }
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": nested_result,
-                        }
-                    )
-                    continue
-
-                if name == "run_command":
-                    level, reason = classify_command(str(args_obj.get("command") or ""))
-                    if level == "deny":
-                        result = json.dumps(
-                            {"error": reason, "blocked": True},
-                            ensure_ascii=False,
-                        )
-                        yield {
-                            "type": "tool_end",
-                            "name": name,
-                            "label": _label(name, source),
-                            "args_summary": summarize_args(name, args_obj),
-                            "ok": False,
-                            "summary": f"失败：{reason[:80]}",
-                            "source": source or "main",
-                        }
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": result,
-                            }
-                        )
-                        continue
-                    if level == "approve":
-                        if auto_deny_approvals:
-                            result = json.dumps(
-                                {
-                                    "error": "中风险命令未获批准（非交互环境已默认拒绝）",
-                                    "blocked": True,
-                                    "denied": True,
-                                },
-                                ensure_ascii=False,
-                            )
-                            yield {
-                                "type": "tool_end",
-                                "name": name,
-                                "label": _label(name, source),
-                                "args_summary": summarize_args(name, args_obj),
-                                "ok": False,
-                                "summary": "未获批准，已拒绝",
-                                "source": source or "main",
-                            }
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tc.id,
-                                    "content": result,
-                                }
-                            )
-                            continue
-                        rec = approval_store.create(
-                            str(args_obj.get("command") or ""),
-                            reason,
-                        )
-                        yield {
-                            "type": "approval_required",
-                            **rec.to_event(),
-                        }
-                        approved = rec.wait(APPROVAL_TIMEOUT_SEC)
-                        if not approved:
-                            result = json.dumps(
-                                {
-                                    "error": "用户拒绝或等待超时，命令未执行",
-                                    "blocked": True,
-                                    "denied": True,
-                                },
-                                ensure_ascii=False,
-                            )
-                            yield {
-                                "type": "tool_end",
-                                "name": name,
-                                "label": _label(name, source),
-                                "args_summary": summarize_args(name, args_obj),
-                                "ok": False,
-                                "summary": "用户拒绝或超时",
-                                "source": source or "main",
-                            }
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tc.id,
-                                    "content": result,
-                                }
-                            )
-                            continue
-
-                result, ui = execute_tool(name, args_json)
-                ui["label"] = _label(name, source)
-                ui["source"] = source or "main"
-                yield {"type": "tool_end", **ui}
+                    yield ev
                 messages.append(
                     {
                         "role": "tool",
@@ -437,5 +447,60 @@ def run_turn(
 
     yield {
         "type": "error",
-        "message": f"已达到最大工具轮次（{limit}），已停止以免循环。",
+        "message": f"已达到最大工具轮次（{max_iters}），已停止以免循环。",
     }
+
+
+def run_turn(
+    messages: list[dict[str, Any]],
+    *,
+    max_iters: int | None = None,
+    allow_delegate: bool = True,
+    source: str = "",
+    auto_deny_approvals: bool = False,
+    provider: str | None = None,
+    model: str | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Execute one user turn. `messages` is mutated in place (OpenAI history).
+
+    Yields event dicts:
+      {"type": "tool_start", ...}
+      {"type": "tool_end", ...}
+      {"type": "approval_required", ...}
+      {"type": "message", "content": "..."}
+      {"type": "error", "message": "..."}
+    """
+    pid = normalize_provider(provider or get_provider() or DEFAULT_PROVIDER)
+    mid = (model or "").strip() or get_model(pid)
+    prev_provider = getattr(_tls, "provider", None)
+    prev_model = getattr(_tls, "model", None)
+    _tls.provider = pid
+    _tls.model = mid
+    limit = max_iters if max_iters is not None else MAX_TOOL_ITERS
+    try:
+        meta = provider_meta(pid)
+        if meta["compat"] == "anthropic":
+            from app.anthropic_agent import run_anthropic_turn
+
+            yield from run_anthropic_turn(
+                messages,
+                provider=pid,
+                model=mid,
+                max_iters=limit,
+                allow_delegate=allow_delegate,
+                source=source,
+                auto_deny_approvals=auto_deny_approvals,
+            )
+            return
+        yield from _openai_compatible_turn(
+            messages,
+            provider=pid,
+            model=mid,
+            max_iters=limit,
+            allow_delegate=allow_delegate,
+            source=source,
+            auto_deny_approvals=auto_deny_approvals,
+        )
+    finally:
+        _tls.provider = prev_provider
+        _tls.model = prev_model

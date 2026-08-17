@@ -32,10 +32,10 @@ def generate_image(prompt: str) -> str:
             {"error": f"prompt 过长（{len(prompt)}），上限 {MAX_PROMPT}"},
             ensure_ascii=False,
         )
-    from app.agent import make_client
+    from app.agent import make_xai_client
 
     try:
-        client = make_client()
+        client = make_xai_client()
     except RuntimeError as exc:
         return json.dumps({"error": str(exc)}, ensure_ascii=False)
 

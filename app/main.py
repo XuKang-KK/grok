@@ -20,7 +20,8 @@ from app import __version__
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
-from app.agent import get_api_key, get_model, run_turn  # noqa: E402
+from app.agent import run_turn  # noqa: E402
+from app.providers import missing_key_message, normalize_provider  # noqa: E402
 from app.approvals import store as approval_store  # noqa: E402
 from app.memory import ensure_data_dir  # noqa: E402
 from app.mcp_client import mcp_status  # noqa: E402
@@ -33,7 +34,15 @@ from app.routines import (  # noqa: E402
     stop_scheduler,
 )
 from app.sessions import Session, SessionStore  # noqa: E402
-from app.settings import public_settings, save_settings  # noqa: E402
+from app.settings import (  # noqa: E402
+    get_api_key,
+    get_model,
+    get_provider,
+    models_catalog,
+    public_settings,
+    save_settings,
+    strip_secrets,
+)
 from app.tools import IMAGE_EXTS, MAX_UPLOAD_BYTES, WORKSPACE, save_upload  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -70,13 +79,25 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=8000)
     session_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
 
 
 class SettingsUpdate(BaseModel):
     xai_api_key: str | None = None
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    provider: str | None = None
+    model: str | None = None
     grok_model: str | None = None
     image_model: str | None = None
     allow_local_browser: bool | None = None
+
+
+class ModelSelect(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    session_id: str | None = None
 
 
 class ApprovalDecision(BaseModel):
@@ -89,12 +110,15 @@ class RoutineCreate(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=4000)
 
 
-def _status_payload() -> dict[str, Any]:
-    active = store.active()
+def _status_payload(sess: Session | None = None) -> dict[str, Any]:
+    active = sess or store.active()
     pub = public_settings()
+    provider = (getattr(active, "provider", None) or "").strip() or pub["provider"]
+    model = (getattr(active, "model", None) or "").strip() or pub["model"]
     return {
         "has_api_key": pub["has_api_key"],
-        "model": pub["model"],
+        "provider": provider,
+        "model": model,
         "image_model": pub["image_model"],
         "allow_local_browser": pub["allow_local_browser"],
         "workspace": str((PROJECT_ROOT / "workspace").resolve()),
@@ -117,7 +141,7 @@ def _session_view(sess: Session) -> dict[str, Any]:
         "ok": True,
         "session": sess.meta(),
         "messages": list(sess.ui_turns),
-        **_status_payload(),
+        **_status_payload(sess),
         "session_id": sess.id,
     }
 
@@ -135,10 +159,7 @@ async def health() -> dict[str, Any]:
 @app.get("/api/settings")
 async def get_settings() -> dict[str, Any]:
     payload = {**public_settings(), "ok": True, "version": __version__}
-    # never leak secrets
-    for banned in ("xai_api_key", "api_key", "key"):
-        payload.pop(banned, None)
-    return payload
+    return strip_secrets(payload)
 
 
 @app.put("/api/settings")
@@ -146,6 +167,14 @@ async def put_settings(req: SettingsUpdate) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     if req.xai_api_key is not None:
         updates["xai_api_key"] = req.xai_api_key
+    if req.openai_api_key is not None:
+        updates["openai_api_key"] = req.openai_api_key
+    if req.anthropic_api_key is not None:
+        updates["anthropic_api_key"] = req.anthropic_api_key
+    if req.provider is not None:
+        updates["provider"] = normalize_provider(req.provider)
+    if req.model is not None:
+        updates["model"] = req.model
     if req.grok_model is not None:
         updates["grok_model"] = req.grok_model
     if req.image_model is not None:
@@ -153,10 +182,43 @@ async def put_settings(req: SettingsUpdate) -> dict[str, Any]:
     if req.allow_local_browser is not None:
         updates["allow_local_browser"] = req.allow_local_browser
     save_settings(updates)
-    payload = {**public_settings(), "ok": True}
-    for banned in ("xai_api_key", "api_key", "key"):
-        payload.pop(banned, None)
-    return payload
+    if "provider" in updates or "model" in updates or "grok_model" in updates:
+        sess = store.active()
+        sess.provider = get_provider()
+        sess.model = get_model(sess.provider)
+        store.save(sess)
+    return strip_secrets({**public_settings(), "ok": True})
+
+
+@app.get("/api/models")
+async def get_models() -> dict[str, Any]:
+    payload = models_catalog()
+    payload["version"] = __version__
+    return strip_secrets(payload)
+
+
+@app.put("/api/model")
+async def put_model(req: ModelSelect) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    if req.provider is not None:
+        updates["provider"] = normalize_provider(req.provider)
+    if req.model is not None and str(req.model).strip():
+        updates["model"] = str(req.model).strip()
+    if updates:
+        save_settings(updates)
+    sess = _resolve_session(req.session_id) if req.session_id else store.active()
+    store.select(sess.id)
+    sess.provider = get_provider()
+    sess.model = get_model(sess.provider)
+    store.save(sess)
+    payload = {
+        **models_catalog(),
+        "ok": True,
+        "session_id": sess.id,
+        "provider": sess.provider,
+        "model": sess.model,
+    }
+    return strip_secrets(payload)
 
 
 @app.get("/api/mcp")
@@ -229,7 +291,7 @@ async def media(folder: str, name: str) -> FileResponse:
 @app.get("/api/history")
 async def history(session_id: str | None = None) -> dict[str, Any]:
     sess = _resolve_session(session_id)
-    return {"messages": list(sess.ui_turns), **_status_payload(), "session_id": sess.id}
+    return {"messages": list(sess.ui_turns), **_status_payload(sess), "session_id": sess.id}
 
 
 @app.get("/api/sessions")
@@ -280,15 +342,40 @@ async def clear() -> dict[str, Any]:
     return {"ok": True, "messages": [], **_status_payload(), "session_id": sess.id}
 
 
-def _require_api_key() -> None:
-    if not get_api_key():
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "未配置 XAI_API_KEY。请打开设置面板填写密钥，"
-                "或写入 data/settings.json / .env（https://console.x.ai）。"
-            ),
-        )
+def _require_api_key(provider: str | None = None) -> str:
+    pid = normalize_provider(provider or get_provider())
+    if not get_api_key(pid):
+        raise HTTPException(status_code=503, detail=missing_key_message(pid))
+    return pid
+
+
+def _resolve_selection(
+    sess: Session,
+    provider: str | None = None,
+    model: str | None = None,
+    *,
+    persist: bool = True,
+) -> tuple[str, str]:
+    pid = normalize_provider(provider or sess.provider or get_provider())
+    mid = (model or sess.model or get_model(pid) or "").strip() or get_model(pid)
+    if persist:
+        changed = False
+        if provider or not sess.provider:
+            if sess.provider != pid:
+                sess.provider = pid
+                changed = True
+        if model or not sess.model:
+            if sess.model != mid:
+                sess.model = mid
+                changed = True
+        if provider or model:
+            save_settings({"provider": pid, "model": mid})
+            sess.provider = pid
+            sess.model = mid
+            changed = True
+        if changed:
+            store.save(sess)
+    return pid, mid
 
 
 def _user_text_and_images(sess: Session, user_text: str) -> tuple[Any, list[str]]:
@@ -297,9 +384,16 @@ def _user_text_and_images(sess: Session, user_text: str) -> tuple[Any, list[str]
     return content, image_paths
 
 
-def _collect_turn(sess: Session, user_text: str) -> dict[str, Any]:
+def _collect_turn(
+    sess: Session,
+    user_text: str,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
     """Run the agent loop and persist UI + model history."""
-    _require_api_key()
+    pid, mid = _resolve_selection(sess, provider, model)
+    _require_api_key(pid)
     store.select(sess.id)
     sess.refresh_system_prompt()
     sess.maybe_title_from_user(user_text)
@@ -309,7 +403,12 @@ def _collect_turn(sess: Session, user_text: str) -> dict[str, Any]:
     reply = ""
     error = None
 
-    for event in run_turn(sess.messages, auto_deny_approvals=True):
+    for event in run_turn(
+        sess.messages,
+        auto_deny_approvals=True,
+        provider=pid,
+        model=mid,
+    ):
         kind = event.get("type")
         if kind == "tool_end":
             tools_ui.append(
@@ -352,7 +451,7 @@ def _collect_turn(sess: Session, user_text: str) -> dict[str, Any]:
         "tools": tools_ui,
         "error": error,
         "session_id": sess.id,
-        **_status_payload(),
+        **_status_payload(sess),
     }
 
 
@@ -395,7 +494,7 @@ async def chat(req: ChatRequest) -> dict[str, Any]:
     if not text:
         raise HTTPException(status_code=400, detail="消息不能为空")
     sess = _resolve_session(req.session_id)
-    return _collect_turn(sess, text)
+    return _collect_turn(sess, text, provider=req.provider, model=req.model)
 
 
 @app.post("/api/chat/stream")
@@ -403,8 +502,9 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     text = req.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="消息不能为空")
-    _require_api_key()
     sess = _resolve_session(req.session_id)
+    pid, mid = _resolve_selection(sess, req.provider, req.model)
+    _require_api_key(pid)
 
     def gen():
         def sse(event: str, data: dict[str, Any]) -> str:
@@ -421,7 +521,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         yielded_any = False
 
         try:
-            for event in run_turn(sess.messages):
+            for event in run_turn(sess.messages, provider=pid, model=mid):
                 kind = event.get("type")
                 if kind == "tool_start":
                     yielded_any = True

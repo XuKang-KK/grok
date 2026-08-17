@@ -9,15 +9,25 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from app.providers import (
+    DEFAULT_IMAGE_MODEL,
+    DEFAULT_PROVIDER,
+    PROVIDER_IDS,
+    PROVIDERS,
+    catalog_payload,
+    default_model_for,
+    normalize_provider,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 ENV_FILE = PROJECT_ROOT / ".env"
 
-DEFAULT_MODEL = "grok-4.6"
-DEFAULT_IMAGE_MODEL = "grok-imagine-image-2.0"
+DEFAULT_MODEL = default_model_for(DEFAULT_PROVIDER)
 
-_SECRET_KEYS = frozenset({"xai_api_key"})
+_SECRET_KEYS = frozenset({"xai_api_key", "openai_api_key", "anthropic_api_key"})
+_STR_KEYS = frozenset({"provider", "model", "grok_model", "image_model"})
 
 
 def _ensure_data_dir() -> None:
@@ -45,16 +55,23 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     for key, value in updates.items():
         if key in _SECRET_KEYS and (value is None or str(value).strip() == ""):
             continue
-        if key == "xai_api_key":
+        if key in _SECRET_KEYS:
             current[key] = str(value).strip()
-        elif key == "grok_model":
-            current[key] = str(value).strip()
-        elif key == "image_model":
+        elif key == "provider":
+            current[key] = normalize_provider(str(value) if value is not None else "")
+        elif key in _STR_KEYS:
             current[key] = str(value).strip()
         elif key == "allow_local_browser":
             current[key] = bool(value)
         else:
             current[key] = value
+    if "model" in updates and updates.get("model") not in (None, ""):
+        current["model"] = str(updates["model"]).strip()
+        if current.get("provider", DEFAULT_PROVIDER) == "xai" or "grok_model" not in current:
+            current["grok_model"] = current["model"]
+    elif "grok_model" in updates and updates.get("grok_model") not in (None, ""):
+        current["grok_model"] = str(updates["grok_model"]).strip()
+        current["model"] = current["grok_model"]
     SETTINGS_FILE.write_text(
         json.dumps(current, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -62,21 +79,41 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     return current
 
 
-def get_api_key() -> str:
+def get_api_key(provider: str | None = None) -> str:
+    """Return the key for `provider` (default: xAI, for image gen / compat)."""
+    pid = normalize_provider(provider) if provider else "xai"
+    meta = PROVIDERS[pid]
     data = load_settings()
     return (
-        str(data.get("xai_api_key") or "").strip()
-        or (os.getenv("XAI_API_KEY") or "").strip()
+        str(data.get(meta["key_field"]) or "").strip()
+        or (os.getenv(meta["env_key"]) or "").strip()
     )
 
 
-def get_model() -> str:
+def get_provider() -> str:
     data = load_settings()
-    return (
-        str(data.get("grok_model") or "").strip()
-        or (os.getenv("GROK_MODEL") or os.getenv("XAI_MODEL") or DEFAULT_MODEL).strip()
-        or DEFAULT_MODEL
+    raw = str(data.get("provider") or "").strip()
+    if raw:
+        return normalize_provider(raw)
+    return DEFAULT_PROVIDER
+
+
+def get_model(provider: str | None = None) -> str:
+    pid = normalize_provider(provider) if provider else get_provider()
+    data = load_settings()
+    stored = (
+        str(data.get("model") or "").strip()
+        or str(data.get("grok_model") or "").strip()
     )
+    if stored and (provider is None or pid == get_provider()):
+        return stored
+    if pid == "xai":
+        env_model = (os.getenv("GROK_MODEL") or os.getenv("XAI_MODEL") or "").strip()
+        if env_model and (provider is None or pid == get_provider()):
+            return env_model
+        if stored and pid == "xai":
+            return stored
+    return default_model_for(pid)
 
 
 def get_image_model() -> str:
@@ -100,11 +137,39 @@ def allow_local_browser() -> bool:
     }
 
 
+def has_api_keys() -> dict[str, bool]:
+    return {pid: bool(get_api_key(pid)) for pid in PROVIDER_IDS}
+
+
 def public_settings() -> dict[str, Any]:
-    """Safe view: never includes the raw API key."""
+    """Safe view: never includes raw API keys."""
+    provider = get_provider()
     return {
-        "has_api_key": bool(get_api_key()),
-        "model": get_model(),
+        "has_api_key": has_api_keys(),
+        "provider": provider,
+        "model": get_model(provider),
         "image_model": get_image_model(),
         "allow_local_browser": allow_local_browser(),
     }
+
+
+def models_catalog() -> dict[str, Any]:
+    pub = public_settings()
+    return catalog_payload(
+        has_api_key=pub["has_api_key"],
+        provider=pub["provider"],
+        model=pub["model"],
+    )
+
+
+def strip_secrets(payload: dict[str, Any]) -> dict[str, Any]:
+    banned = (
+        "xai_api_key",
+        "openai_api_key",
+        "anthropic_api_key",
+        "api_key",
+        "key",
+    )
+    for name in banned:
+        payload.pop(name, None)
+    return payload

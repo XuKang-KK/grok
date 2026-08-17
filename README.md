@@ -1,33 +1,43 @@
-# Grok 助手（本地 v1.0）
+# Grok 助手（本地 v1.1）
 
-一个可在本机运行的完整 Grok 风格助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1 在 v0.3 之上补齐了设置面板、流式工具芯片、危险命令批准、视觉理解、Playwright 浏览器、MCP 客户端、定时例程、子助手和图像生成。
+一个可在本机运行的完整 Grok 风格助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.1 在右侧聊天面板加入模型选择器，支持 xAI / OpenAI / Anthropic 三个提供商。
 
-- 后端：FastAPI + xAI Grok API（OpenAI 兼容 Chat Completions，默认 `grok-4.6`）
-- 前端：单页中文深色聊天界面（左侧多会话，右侧设置 / 例程）
+- 后端：FastAPI；xAI / OpenAI 走 OpenAI 兼容 Chat Completions，Anthropic 走 Messages API + 工具循环（默认 `grok-4.6`）
+- 前端：单页中文深色聊天界面（左侧多会话，右侧「模型」面板，设置 / 例程抽屉）
 - 工具在项目下的 `workspace/` 目录执行（本地开发沙箱，**不是**安全隔离环境）
 - 会话、记忆、设置、例程持久化在 `data/`（已 gitignore，切勿提交密钥）
 - 上传文件在 `workspace/uploads/`，生成图在 `workspace/generated/`
 
-## 获取 API Key
+## 获取 API Key（多提供商）
 
-1. 打开 [xAI Console](https://console.x.ai) 注册 / 登录
-2. 创建 API Key
-3. 任选其一（设置面板**无需重启**）：
-   - 启动后点右上角「设置」，填入密钥并保存（写入 `data/settings.json`）
-   - 或复制 `.env.example` 为 `.env` 后填入 `XAI_API_KEY`
+v1.1 支持三个提供商，聊天对话框**右侧「模型」面板**可切换，对下一条消息生效（同时写入当前会话和默认设置）。
+
+| 提供商 | 基址 | 预置模型 |
+|--------|------|----------|
+| **xAI** | `https://api.x.ai/v1`（OpenAI 兼容） | `grok-4.6`（默认）、`grok-4.5` |
+| **OpenAI** | `https://api.openai.com/v1`（OpenAI SDK + tools） | `gpt-5.6`、`gpt-5`、`gpt-5-mini`、`gpt-5-chat-latest` |
+| **Anthropic** | `https://api.anthropic.com`（Messages API + tools，**不**兼容 OpenAI） | `claude-opus-5`、`claude-sonnet-5`、`claude-fable-5`、`claude-haiku-4-5` |
+
+右侧面板也可以输入自定义模型 id（仍走当前提供商）。
+
+密钥按提供商分别保存在 gitignored 的 `data/settings.json`：`xai_api_key` / `openai_api_key` / `anthropic_api_key`。环境变量 `XAI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 作为回退。设置抽屉可分别粘贴三个密钥；已保存则留空不修改。界面**永不回显**密钥。
+
+1. 到对应控制台申请密钥：[xAI](https://console.x.ai) / [OpenAI](https://platform.openai.com) / [Anthropic](https://console.anthropic.com)
+2. 任选其一（**无需重启**）：
+   - 启动后点右上角「设置」，填入对应提供商密钥并保存
+   - 或复制 `.env.example` 为 `.env` 后填入
 
 ```bash
 cp .env.example .env
 # XAI_API_KEY=xai-...
+# OPENAI_API_KEY=sk-...
+# ANTHROPIC_API_KEY=sk-ant-...
 # GROK_MODEL=grok-4.6
 ```
 
-默认模型 `grok-4.6`（function calling + 视觉）。可在设置或 `.env` 中改 `GROK_MODEL`。
+当前选中的提供商没有密钥时，聊天接口返回 **503**，中文错误会点名该提供商。
 
-API 基址：`https://api.x.ai/v1`  
-图像生成：`POST /v1/images/generations`，默认模型 `grok-imagine-image-2.0`。
-
-界面只显示「是否已保存密钥」，**永不回显**密钥本身。
+图像生成仍只走 xAI（`POST /v1/images/generations`，默认 `grok-imagine-image-2.0`）。当前对话不是 xAI 时，只要已保存 xAI 密钥仍可生图。
 
 ## 运行（推荐）
 
@@ -101,7 +111,7 @@ Cron 为 5 段：`分 时 日 月 周`，例如每天 9:00：`0 9 * * *`。
 
 ## 视觉
 
-上传 `png` / `jpg` / `webp` 后，下一轮对话会把图片以 `image_url` data URL 发给模型（xAI Chat Completions 多模态，`detail: high`）。不必再 `read_file` 二进制图。
+上传 `png` / `jpg` / `webp` 后，下一轮对话会把图片以 `image_url` data URL 发给 xAI / OpenAI（`detail: high`）。Anthropic 会转成 Messages 的 image 块；无法转换时返回明确错误。不必再 `read_file` 二进制图。
 
 ## 子助手与生图
 
@@ -147,7 +157,7 @@ source venv/bin/activate
 pytest
 ```
 
-覆盖：路径穿越、危险命令硬拦截、中风险分类、`fetch_url` / 浏览器 URL 封锁、上传路径、cron 解析、子助手不能递归、设置接口不泄露密钥、MCP 示例配置可干净加载。
+覆盖：路径穿越、危险命令硬拦截、中风险分类、`fetch_url` / 浏览器 URL 封锁、上传路径、cron 解析、子助手不能递归、设置接口不泄露密钥、MCP 示例配置可干净加载、三家提供商目录与预置模型 id、缺 OpenAI/Anthropic 密钥时的中文 503。
 
 ## 项目结构
 
@@ -158,9 +168,11 @@ grok-assistant/
   mcp.example.json     # 可解析的 MCP 示例（默认不启用）
   requirements.txt
   app/main.py          # FastAPI：会话 / 上传 / SSE / 设置 / 例程 / 批准
-  app/agent.py         # 工具循环、子助手、批准等待
+  app/agent.py         # 工具循环、子助手、批准等待（xAI/OpenAI）
+  app/anthropic_agent.py # Anthropic Messages 工具循环
+  app/providers.py     # 提供商目录与消息转换
   app/tools.py         # 沙箱工具 + 动态 schema
-  app/settings.py      # data/settings.json（每请求重读）
+  app/settings.py      # data/settings.json（每请求重读，三把密钥）
   app/approvals.py     # 中风险命令批准
   app/browser.py       # Playwright
   app/mcp_client.py    # stdio JSON-RPC MCP 客户端
@@ -175,7 +187,7 @@ grok-assistant/
 
 ## 常见问题
 
-- **未配置密钥**：服务能启动。打开「设置」填写后立即生效，不必重启。
+- **未配置密钥**：服务能启动。打开「设置」填写对应提供商密钥后立即生效，不必重启。右侧面板会显示「该提供商密钥已保存 / 未保存」。
 - **鉴权失败 / 模型不存在**：检查 key，或把模型改成控制台里可用的 id。
 - **Playwright 失败**：执行 `python -m playwright install chromium`。
 - **MCP 连不上**：设置面板会显示错误；`enabled: false` 时必须干净（无工具、无异常）。

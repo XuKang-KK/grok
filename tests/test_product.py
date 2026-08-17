@@ -109,7 +109,7 @@ def test_settings_do_not_leak_key(tmp_path, monkeypatch):
     dumped = json.dumps(pub)
     assert "xai-super-secret-key" not in dumped
     assert "super-secret" not in dumped
-    assert pub["has_api_key"] is True
+    assert pub["has_api_key"]["xai"] is True
     assert pub["model"] == "grok-4.6"
     assert "xai_api_key" not in pub
 
@@ -123,7 +123,7 @@ def test_settings_do_not_leak_key(tmp_path, monkeypatch):
     body = res.json()
     blob = json.dumps(body)
     assert "xai-super-secret-key" not in blob
-    assert body.get("has_api_key") is True
+    assert body.get("has_api_key", {}).get("xai") is True
     assert "xai_api_key" not in body
     assert "api_key" not in body or body.get("api_key") in (None, "", False)
 
