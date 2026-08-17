@@ -35,5 +35,5 @@ raise SystemExit(0 if ok else 1)
   python -m playwright install chromium
 fi
 
-echo "启动 Grok 助手：http://127.0.0.1:8000"
+echo "启动 KK AI助手：http://127.0.0.1:8000"
 exec uvicorn app.main:app --host 127.0.0.1 --port 8000

@@ -31,7 +31,7 @@ MAX_TOOL_ITERS = 8
 MAX_SUBAGENT_ITERS = 5
 SUBAGENT_CONCURRENCY = 2
 
-SYSTEM_PROMPT = """你是一个运行在用户本机上的 Grok 风格助手。请用简体中文回答，除非用户使用其他语言。
+SYSTEM_PROMPT = """你是一个运行在用户本机上的 KK AI助手。请用简体中文回答，除非用户使用其他语言。
 
 你可以使用以下工具：
 - web_search：搜索公开网页（文档、新闻、API 说明）。

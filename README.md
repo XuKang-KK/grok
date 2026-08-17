@@ -1,6 +1,6 @@
-# Grok 助手（本地 v1.1）
+# KK AI助手（本地 v1.1）
 
-一个可在本机运行的完整 Grok 风格助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.1 在右侧聊天面板加入模型选择器，支持 xAI / OpenAI / Anthropic 三个提供商。
+一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.1 在右侧聊天面板加入模型选择器，支持 xAI / OpenAI / Anthropic 三个提供商。
 
 - 后端：FastAPI；xAI / OpenAI 走 OpenAI 兼容 Chat Completions，Anthropic 走 Messages API + 工具循环（默认 `grok-4.6`）
 - 前端：单页中文深色聊天界面（左侧多会话，右侧「模型」面板，设置 / 例程抽屉）

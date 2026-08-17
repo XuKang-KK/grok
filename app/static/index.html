@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Grok 助手</title>
+  <title>KK AI助手</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect rx='8' width='32' height='32' fill='%230b0b0d'/%3E%3Cpath d='M16 6l2.4 6.4L25 15l-6.6 2.6L16 24l-2.4-6.4L7 15l6.6-2.6z' fill='%23f4c56a'/%3E%3C/svg%3E" />
   <style>
     :root {
@@ -692,7 +692,7 @@
             </svg>
           </div>
           <div>
-            <h1>Grok 助手</h1>
+            <h1>KK AI助手</h1>
             <p>本地智能体</p>
           </div>
         </div>
@@ -711,7 +711,7 @@
             </svg>
           </div>
           <div>
-            <h1 id="chatTitle">Grok 助手</h1>
+            <h1 id="chatTitle">KK AI助手</h1>
             <p>搜索 · 文件 · 浏览器 · 视觉 · 例程</p>
           </div>
         </div>
@@ -894,7 +894,7 @@
       thread.innerHTML = `
         <div class="empty">
           <h2>今天想做点什么？</h2>
-          <p>这是一个可运行的 Grok 风格助手。模型可以循环调用工具，直到给出最终回答。</p>
+          <p>这是一个可运行的 KK AI助手。模型可以循环调用工具，直到给出最终回答。</p>
           <div class="chips">
             ${DEMOS.map(d => `<button class="chip" type="button" data-text="${escapeHtml(d.text)}"><span>${d.tag}</span>${escapeHtml(d.text)}</button>`).join("")}
           </div>
@@ -1012,7 +1012,7 @@
         sessionList.appendChild(row);
       });
       const active = (sessions || []).find(s => s.id === activeId);
-      chatTitle.textContent = (active && active.title) || "Grok 助手";
+      chatTitle.textContent = (active && active.title) || "KK AI助手";
     }
 
     async function loadSessions() {

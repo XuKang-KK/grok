@@ -72,7 +72,7 @@ async def lifespan(_app: FastAPI):
         pass
 
 
-app = FastAPI(title="Grok 助手", version=__version__, lifespan=lifespan)
+app = FastAPI(title="KK AI助手", version=__version__, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
