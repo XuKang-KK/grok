@@ -101,7 +101,17 @@
     "mcp.connected": "已连接",
     "mcp.failed": "失败",
     "mcp.disabled": "未启用",
-    "mcp.noTools": "无工具"
+    "mcp.noTools": "无工具",
+    "auth.title": "访问口令",
+    "auth.hint": "此服务已启用访问口令。请输入后继续。",
+    "auth.placeholder": "访问口令",
+    "auth.submit": "进入",
+    "auth.bad": "口令不正确",
+    "settings.accessToken": "访问口令",
+    "settings.accessTokenHint": "用于局域网保护。设置后调用 API 需要口令。界面永不回显。也可写在 .env 的 KK_ACCESS_TOKEN。",
+    "settings.clearAccessToken": "清除已保存的访问口令",
+    "settings.accessTokenSet": "已设置口令（不回显）",
+    "settings.accessTokenMissing": "未设置口令"
   },
   "en": {
     "app.name": "KK AI助手",
@@ -205,6 +215,16 @@
     "mcp.connected": "connected",
     "mcp.failed": "failed",
     "mcp.disabled": "disabled",
-    "mcp.noTools": "no tools"
+    "mcp.noTools": "no tools",
+    "auth.title": "Access token",
+    "auth.hint": "This server requires an access token. Enter it to continue.",
+    "auth.placeholder": "Access token",
+    "auth.submit": "Continue",
+    "auth.bad": "Incorrect token",
+    "settings.accessToken": "Access token",
+    "settings.accessTokenHint": "Protects LAN access. After it is set, APIs require the token. It is never shown again. You can also set KK_ACCESS_TOKEN in .env.",
+    "settings.clearAccessToken": "Clear the saved access token",
+    "settings.accessTokenSet": "Token set (never shown)",
+    "settings.accessTokenMissing": "No token set"
   }
 }

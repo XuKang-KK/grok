@@ -714,9 +714,62 @@
     .user-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .user-thumbs img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
 
+    .auth-gate {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      background: rgba(9, 9, 11, 0.82);
+      backdrop-filter: blur(10px);
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .auth-gate.show { display: flex; }
+    .auth-card {
+      width: min(400px, 100%);
+      background: #121216;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px 22px 20px;
+      box-shadow: var(--shadow);
+    }
+    .auth-card h2 { margin: 0 0 8px; font-size: 18px; color: var(--gold); }
+    .auth-card p { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .auth-card input {
+      width: 100%;
+      background: #0b0b0e;
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 15px;
+      margin-bottom: 12px;
+    }
+    .auth-card button {
+      width: 100%;
+      background: var(--gold-dim);
+      color: var(--gold);
+      border: 1px solid rgba(244,197,106,0.35);
+      border-radius: 999px;
+      padding: 10px 0;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .auth-card .err { color: var(--danger); font-size: 12px; min-height: 18px; margin: 10px 0 0; }
+
   </style>
 </head>
 <body>
+  <div class="auth-gate" id="authGate" hidden>
+    <form class="auth-card" id="authForm">
+      <h2 data-i18n="auth.title">访问口令</h2>
+      <p data-i18n="auth.hint">此服务已启用访问口令。请输入后继续。</p>
+      <input type="password" id="authTokenInput" placeholder="访问口令" data-i18n-placeholder="auth.placeholder" autocomplete="current-password" />
+      <button type="submit" id="authSubmit" data-i18n="auth.submit">进入</button>
+      <p class="err" id="authMsg"></p>
+    </form>
+  </div>
   <div class="backdrop" id="backdrop"></div>
   <div class="shell">
     <aside class="sidebar" id="sidebar">
@@ -843,6 +896,15 @@
         <input type="text" id="imageModelInput" placeholder="grok-imagine-image-2.0" />
       </div>
       <div class="field">
+        <label data-i18n="settings.accessToken">访问口令</label>
+        <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
+          <span class="key-dot" id="keyDotToken"></span><span id="keyStatusToken">未设置口令</span>
+        </div>
+        <input type="password" id="accessTokenInput" placeholder="已保存则留空不修改" data-i18n-placeholder="settings.keyPlaceholder" autocomplete="off" />
+        <label class="check"><input type="checkbox" id="clearAccessToken" /> <span data-i18n="settings.clearAccessToken">清除已保存的访问口令</span></label>
+        <div class="hint" data-i18n="settings.accessTokenHint">用于局域网保护。设置后调用 API 需要口令。界面永不回显。也可写在 .env 的 KK_ACCESS_TOKEN。</div>
+      </div>
+      <div class="field">
         <label class="check"><input type="checkbox" id="localBrowser" /> <span data-i18n="settings.localBrowser">允许浏览器访问 localhost / 内网（默认关闭）</span></label>
       </div>
       <button class="save-btn" type="button" id="saveSettings" data-i18n="settings.save">保存设置</button>
@@ -936,6 +998,43 @@
         I18N = await res.json();
       } catch (e) {}
       applyI18n();
+    }
+
+    const _rawFetch = window.fetch.bind(window);
+    function showAuthGate() {
+      const gate = document.getElementById("authGate");
+      if (!gate) return;
+      gate.hidden = false;
+      gate.classList.add("show");
+      const inp = document.getElementById("authTokenInput");
+      if (inp) setTimeout(function () { inp.focus(); }, 0);
+    }
+    function hideAuthGate() {
+      const gate = document.getElementById("authGate");
+      if (!gate) return;
+      gate.hidden = true;
+      gate.classList.remove("show");
+      const msg = document.getElementById("authMsg");
+      if (msg) msg.textContent = "";
+    }
+    window.fetch = async function (input, init) {
+      const url = typeof input === "string" ? input : (input && input.url) || "";
+      const res = await _rawFetch(input, init);
+      const path = String(url).split("?")[0];
+      if (res.status === 401 && path.indexOf("/api/") === 0 && path.indexOf("/api/login") < 0 && path.indexOf("/api/health") < 0) {
+        showAuthGate();
+      }
+      return res;
+    };
+    async function probeAuth() {
+      try {
+        const h = await _rawFetch("/api/health");
+        const data = await h.json();
+        if (data && data.auth_required) {
+          const probe = await _rawFetch("/api/settings");
+          if (probe.status === 401) showAuthGate();
+        }
+      } catch (e) {}
     }
 
     const thread = document.getElementById("thread");
@@ -1388,6 +1487,13 @@
         dot.classList.toggle("on", has);
         st.textContent = has ? t("settings.keySaved") : t("settings.keyMissing");
       });
+      const tokenDot = document.getElementById("keyDotToken");
+      const tokenSt = document.getElementById("keyStatusToken");
+      if (tokenDot && tokenSt) {
+        const hasTok = !!(data && (data.has_access_token || data.auth_required));
+        tokenDot.classList.toggle("on", hasTok);
+        tokenSt.textContent = hasTok ? t("settings.accessTokenSet") : t("settings.accessTokenMissing");
+      }
     }
     function syncRail(data) {
       const keys = keysFrom(data);
@@ -1510,7 +1616,12 @@
       document.getElementById("keyInputXai").value = "";
       document.getElementById("keyInputOpenai").value = "";
       document.getElementById("keyInputAnthropic").value = "";
+      const tokIn = document.getElementById("accessTokenInput");
+      if (tokIn) tokIn.value = "";
+      const tokClr = document.getElementById("clearAccessToken");
+      if (tokClr) tokClr.checked = false;
       syncRail(data);
+      syncKeyDot(data);
       const mcpRes = await fetch("/api/mcp");
       const mcp = await mcpRes.json();
       const box = document.getElementById("mcpList");
@@ -1584,6 +1695,11 @@
       if (xai) body.xai_api_key = xai;
       if (oai) body.openai_api_key = oai;
       if (ant) body.anthropic_api_key = ant;
+      const tokEl = document.getElementById("accessTokenInput");
+      const tokVal = tokEl ? tokEl.value : "";
+      const clearTok = document.getElementById("clearAccessToken");
+      if (tokVal) body.access_token = tokVal;
+      if (clearTok && clearTok.checked) body.clear_access_token = true;
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -1593,8 +1709,18 @@
       document.getElementById("keyInputXai").value = "";
       document.getElementById("keyInputOpenai").value = "";
       document.getElementById("keyInputAnthropic").value = "";
+      if (tokEl) tokEl.value = "";
+      if (clearTok) clearTok.checked = false;
+      if (res.ok && tokVal) {
+        await _rawFetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: tokVal }),
+        });
+      }
       document.getElementById("settingsMsg").textContent = res.ok ? t("settings.saved") : (data.detail || t("settings.saveFailed"));
       syncRail(data);
+      syncKeyDot(data);
       loadCatalog().catch(() => {});
     });
     document.getElementById("addRoutine").addEventListener("click", async () => {
@@ -1673,9 +1799,38 @@
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
+    const authForm = document.getElementById("authForm");
+    if (authForm) {
+      authForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const token = (document.getElementById("authTokenInput").value || "").trim();
+        const msg = document.getElementById("authMsg");
+        if (msg) msg.textContent = "";
+        try {
+          const res = await _rawFetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            if (msg) msg.textContent = data.detail || t("auth.bad");
+            return;
+          }
+          document.getElementById("authTokenInput").value = "";
+          hideAuthGate();
+          loadCatalog().catch(() => {});
+          loadHistory();
+        } catch (err) {
+          if (msg) msg.textContent = t("auth.bad");
+        }
+      });
+    }
     hydrateLang().then(() => {
-      loadCatalog().catch(() => {});
-      loadHistory();
+      probeAuth().then(() => {
+        loadCatalog().catch(() => {});
+        loadHistory();
+      });
     });
   </script>
 

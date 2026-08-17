@@ -26,7 +26,7 @@ ENV_FILE = PROJECT_ROOT / ".env"
 
 DEFAULT_MODEL = default_model_for(DEFAULT_PROVIDER)
 
-_SECRET_KEYS = frozenset({"xai_api_key", "openai_api_key", "anthropic_api_key"})
+_SECRET_KEYS = frozenset({"xai_api_key", "openai_api_key", "anthropic_api_key", "access_token"})
 _STR_KEYS = frozenset({"provider", "model", "grok_model", "image_model", "language"})
 
 
@@ -52,7 +52,12 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     """Merge updates into data/settings.json. Empty secret strings mean 'keep'."""
     _ensure_data_dir()
     current = load_settings()
+    if updates.get("clear_access_token"):
+        current.pop("access_token", None)
+        current.pop("kk_access_token", None)
     for key, value in updates.items():
+        if key in {"clear_access_token"}:
+            continue
         if key in _SECRET_KEYS and (value is None or str(value).strip() == ""):
             continue
         if key in _SECRET_KEYS:
@@ -160,6 +165,8 @@ def public_settings() -> dict[str, Any]:
         "image_model": get_image_model(),
         "allow_local_browser": allow_local_browser(),
         "language": get_language(),
+        "has_access_token": bool(get_access_token()),
+        "auth_required": bool(get_access_token()),
     }
 
 
@@ -179,7 +186,57 @@ def strip_secrets(payload: dict[str, Any]) -> dict[str, Any]:
         "anthropic_api_key",
         "api_key",
         "key",
+        "access_token",
+        "kk_access_token",
+        "ACCESS_TOKEN",
+        "KK_ACCESS_TOKEN",
+        "token",
+        "kk_token",
     )
     for name in banned:
         payload.pop(name, None)
     return payload
+
+
+def get_host() -> str:
+    """Bind address. Default 127.0.0.1 — never 0.0.0.0 unless the user sets HOST."""
+    load_dotenv(ENV_FILE, override=False)
+    raw = (os.getenv("HOST") or "").strip()
+    return raw or "127.0.0.1"
+
+
+def get_port() -> int:
+    load_dotenv(ENV_FILE, override=False)
+    raw = (os.getenv("PORT") or "").strip() or "8000"
+    try:
+        port = int(raw)
+    except ValueError:
+        return 8000
+    if port < 1 or port > 65535:
+        return 8000
+    return port
+
+
+def get_bind() -> str:
+    return f"{get_host()}:{get_port()}"
+
+
+def get_access_token() -> str:
+    """Optional LAN access token. Settings override env. Never log the value."""
+    data = load_settings()
+    stored = str(data.get("access_token") or data.get("kk_access_token") or "").strip()
+    if stored:
+        return stored
+    return (os.getenv("KK_ACCESS_TOKEN") or os.getenv("ACCESS_TOKEN") or "").strip()
+
+
+def get_cors_origins() -> list[str]:
+    load_dotenv(ENV_FILE, override=False)
+    raw = (os.getenv("KK_CORS_ORIGINS") or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def has_any_provider_key() -> bool:
+    return any(has_api_keys().values())

@@ -274,3 +274,27 @@ def browser_screenshot() -> str:
         },
         ensure_ascii=False,
     )
+
+
+_chromium_cached: bool | None = None
+
+
+def chromium_available() -> bool:
+    """True if the Playwright Chromium executable exists on disk."""
+    global _chromium_cached
+    if _chromium_cached is not None:
+        return _chromium_cached
+    try:
+        import os
+
+        from playwright.sync_api import sync_playwright
+
+        pw = sync_playwright().start()
+        try:
+            path = getattr(pw.chromium, "executable_path", None)
+            _chromium_cached = bool(path and os.path.exists(path))
+        finally:
+            pw.stop()
+    except Exception:
+        _chromium_cached = False
+    return _chromium_cached

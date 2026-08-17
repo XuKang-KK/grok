@@ -4,9 +4,12 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const HOST = "127.0.0.1";
-const PORT = 8000;
-const ORIGIN = "http://" + HOST + ":" + PORT;
+const BIND_HOST = process.env.HOST || "127.0.0.1";
+const PORT = parseInt(process.env.PORT || "8000", 10) || 8000;
+const CONNECT_HOST = (BIND_HOST === "0.0.0.0" || BIND_HOST === "::" || BIND_HOST === "[::]")
+  ? "127.0.0.1"
+  : BIND_HOST;
+const ORIGIN = "http://" + CONNECT_HOST + ":" + PORT;
 
 let mainWindow = null;
 let backendProc = null;
@@ -45,7 +48,7 @@ function spawnBackend(root) {
     return spawn("bash", [startSh], { cwd: root, stdio: "inherit", env: process.env });
   }
   const py = findPython(root);
-  return spawn(py, ["-m", "uvicorn", "app.main:app", "--host", HOST, "--port", String(PORT)], {
+  return spawn(py, ["-m", "uvicorn", "app.main:app", "--host", BIND_HOST, "--port", String(PORT)], {
     cwd: root,
     stdio: "inherit",
     env: process.env,
@@ -67,7 +70,30 @@ async function ensureBackend() {
     await new Promise(function (r) { setTimeout(r, 500); });
     if (await healthCheck()) return;
   }
-  throw new Error("Backend did not become ready on 127.0.0.1:8000");
+  throw new Error("后端未在 " + CONNECT_HOST + ":" + PORT + " 就绪。请确认已创建 venv 并安装 requirements.txt。");
+}
+
+function errorPageHtml(err) {
+  const raw = err && err.message ? String(err.message) : "";
+  const msg = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>KK AI助手</title>" +
+    "<style>html,body{height:100%;margin:0}body{background:#09090b;color:#f4f1ea;" +
+    "font-family:\"PingFang SC\",\"Noto Sans SC\",system-ui,sans-serif;display:flex;" +
+    "align-items:center;justify-content:center}.box{max-width:460px;padding:32px}" +
+    "h1{color:#f4c56a;font-size:20px;margin:0 0 12px}p{color:#9a958b;line-height:1.65;margin:0 0 10px}" +
+    "code{color:#f4c56a}</style></head><body><div class=\"box\">" +
+    "<h1>无法连接后端</h1>" +
+    "<p>KK AI助手没能在 <code>" + CONNECT_HOST + ":" + PORT + "</code> 启动 Python 服务，所以窗口显示这条说明，而不是空白页。</p>" +
+    "<p>请先在项目根目录准备好虚拟环境并安装依赖，然后重试：</p>" +
+    "<p><code>./start.sh</code>（macOS / Linux）或 <code>.\\start.ps1</code>（Windows）</p>" +
+    "<p>也可以先打开 <code>" + ORIGIN + "</code> 确认网页能用，再启动桌面端。</p>" +
+    (msg ? "<p>" + msg + "</p>" : "") +
+    "</div></body></html>";
+}
+
+function showBackendError(err) {
+  if (!mainWindow) return;
+  mainWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(errorPageHtml(err)));
 }
 
 function createWindow() {
@@ -87,8 +113,17 @@ function createWindow() {
     }
   });
   mainWindow.setTitle("KK AI助手");
-  mainWindow.loadURL(ORIGIN);
   mainWindow.on("closed", function () { mainWindow = null; });
+}
+
+async function loadAppOrError() {
+  try {
+    await ensureBackend();
+    if (mainWindow) mainWindow.loadURL(ORIGIN);
+  } catch (err) {
+    console.error(err);
+    showBackendError(err);
+  }
 }
 
 function stopBackendIfStarted() {
@@ -100,10 +135,13 @@ function stopBackendIfStarted() {
 }
 
 app.whenReady().then(async function () {
-  try { await ensureBackend(); } catch (err) { console.error(err); }
   createWindow();
+  await loadAppOrError();
   app.on("activate", function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+      loadAppOrError();
+    }
   });
 });
 

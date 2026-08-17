@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -34,10 +33,23 @@ from app.routines import (  # noqa: E402
     stop_scheduler,
 )
 from app.sessions import Session, SessionStore  # noqa: E402
+from app.auth import (  # noqa: E402
+    COOKIE_NAME,
+    AccessTokenMiddleware,
+    SameOriginCORSMiddleware,
+    tokens_match,
+    warn_if_lan_unprotected,
+)
+from app.browser import chromium_available  # noqa: E402
 from app.settings import (  # noqa: E402
+    get_access_token,
     get_api_key,
+    get_bind,
+    get_host,
     get_model,
+    get_port,
     get_provider,
+    has_any_provider_key,
     models_catalog,
     public_settings,
     save_settings,
@@ -55,6 +67,7 @@ store = SessionStore()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     if "pytest" not in sys.modules:
+        warn_if_lan_unprotected()
         start_scheduler()
     yield
     stop_scheduler()
@@ -73,6 +86,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="KK AI助手", version=__version__, lifespan=lifespan)
+app.add_middleware(AccessTokenMiddleware)
+app.add_middleware(SameOriginCORSMiddleware)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -93,6 +108,12 @@ class SettingsUpdate(BaseModel):
     image_model: str | None = None
     allow_local_browser: bool | None = None
     language: str | None = None
+    access_token: str | None = None
+    clear_access_token: bool | None = None
+
+
+class LoginRequest(BaseModel):
+    token: str = Field(default="", max_length=512)
 
 
 class ModelSelect(BaseModel):
@@ -170,9 +191,61 @@ async def service_worker() -> FileResponse:
     )
 
 
+def _runtime_payload() -> dict[str, Any]:
+    host = get_host()
+    return {
+        "version": __version__,
+        "host": host,
+        "bind": get_bind(),
+        "auth_required": bool(get_access_token()),
+        "has_any_provider_key": has_any_provider_key(),
+        "chromium": chromium_available(),
+    }
+
+
+def _ready_payload() -> dict[str, Any]:
+    host = get_host()
+    issues: list[str] = []
+    if not has_any_provider_key():
+        issues.append("missing_provider_key")
+    if not chromium_available():
+        issues.append("missing_chromium")
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        issues.append("listening_only_on_localhost")
+    if host in {"0.0.0.0", "::", "[::]"} and not get_access_token():
+        issues.append("auth_missing_on_lan")
+    return {"ok": not issues, "issues": issues}
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, **_status_payload()}
+    return {"ok": True, **_status_payload(), **_runtime_payload()}
+
+
+@app.get("/api/ready")
+async def ready() -> dict[str, Any]:
+    return _ready_payload()
+
+
+@app.post("/api/login")
+async def login(req: LoginRequest, response: Response) -> dict[str, Any]:
+    expected = get_access_token()
+    if not expected:
+        response.delete_cookie(COOKIE_NAME, path="/")
+        return {"ok": True, "auth_required": False}
+    provided = (req.token or "").strip()
+    if not tokens_match(provided, expected):
+        raise HTTPException(status_code=401, detail="口令不正确")
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=provided,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        path="/",
+        max_age=60 * 60 * 24 * 30,
+    )
+    return {"ok": True, "auth_required": True}
 
 
 @app.get("/api/settings")
@@ -202,6 +275,10 @@ async def put_settings(req: SettingsUpdate) -> dict[str, Any]:
         updates["allow_local_browser"] = req.allow_local_browser
     if req.language is not None:
         updates["language"] = req.language
+    if req.access_token is not None:
+        updates["access_token"] = req.access_token
+    if req.clear_access_token:
+        updates["clear_access_token"] = True
     save_settings(updates)
     if "provider" in updates or "model" in updates or "grok_model" in updates:
         sess = store.active()
@@ -623,8 +700,10 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
 def main() -> None:
     import uvicorn
 
-    host = os.getenv("HOST", "127.0.0.1")
-    port = int(os.getenv("PORT", "8000"))
+    host = get_host()
+    port = get_port()
+    warn_if_lan_unprotected(host)
+    print(f"启动 KK AI助手：http://{host}:{port}", flush=True)
     uvicorn.run("app.main:app", host=host, port=port, reload=True)
 
 

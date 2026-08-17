@@ -1,6 +1,6 @@
-# KK AI助手（本地 v1.2）
+# KK AI助手（本地 v1.2.1）
 
-一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.2 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文；右侧模型选择器支持 xAI / OpenAI / Anthropic。
+一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.2.1 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文；右侧模型选择器支持 xAI / OpenAI / Anthropic。
 
 - 后端：FastAPI；xAI / OpenAI 走 OpenAI 兼容 Chat Completions，Anthropic 走 Messages API + 工具循环（默认 `grok-4.6`）
 - 前端：单页中文深色聊天界面（左侧多会话，右侧「模型」面板，设置 / 例程抽屉）
@@ -48,9 +48,11 @@ cd grok-assistant
 ./start.sh
 ```
 
-`start.sh` 会：创建 venv、安装依赖、缺少 `.env` 时复制示例、若本机还没有 Chromium 则执行 `python -m playwright install chromium`，然后在 `127.0.0.1:8000` 启动。
+`start.sh`（Windows 用 `start.ps1`）会：创建 venv、安装依赖、缺少 `.env` 时复制示例、若本机还没有 Chromium 则执行 `python -m playwright install chromium`，然后按 `HOST`/`PORT` 启动（默认 `127.0.0.1:8000`）。
 
 浏览器打开：http://127.0.0.1:8000
+
+手机要连电脑时，在 `.env` 设 `HOST=0.0.0.0` 并设置 `KK_ACCESS_TOKEN`，不要把 `0.0.0.0` 当成默认值。
 
 ## 网页 / 桌面 / 手机 / 语言
 
@@ -66,6 +68,8 @@ cd grok-assistant
 ```bash
 python -m app
 ```
+
+`python -m app` 与启动脚本一样读取 `HOST` / `PORT`。
 
 ## Playwright 浏览器
 
@@ -166,7 +170,7 @@ source venv/bin/activate
 pytest
 ```
 
-覆盖：路径穿越、危险命令硬拦截、中风险分类、`fetch_url` / 浏览器 URL 封锁、上传路径、cron 解析、子助手不能递归、设置接口不泄露密钥、MCP 示例配置可干净加载、三家提供商目录与预置模型 id、缺 OpenAI/Anthropic 密钥时的中文 503、i18n 中英文字典、语言设置默认中文。
+覆盖：路径穿越、危险命令硬拦截、中风险分类、`fetch_url` / 浏览器 URL 封锁、上传路径、cron 解析、子助手不能递归、设置接口不泄露密钥、MCP 示例配置可干净加载、三家提供商目录与预置模型 id、缺 OpenAI/Anthropic 密钥时的中文 503、i18n 中英文字典、语言设置默认中文、无口令时 API 仍开放、有口令时 chat/settings 先 401 再带 header 通过。
 
 ## 项目结构
 
@@ -174,9 +178,11 @@ pytest
 grok-assistant/
   README.md
   start.sh
+  start.ps1            # Windows，同样读取 HOST/PORT
   mcp.example.json     # 可解析的 MCP 示例（默认不启用）
   requirements.txt
-  app/main.py          # FastAPI：会话 / 上传 / SSE / 设置 / 例程 / 批准
+  app/main.py          # FastAPI：会话 / 上传 / SSE / 设置 / 例程 / 批准 / 就绪
+  app/auth.py          # 可选访问口令与 CORS
   app/agent.py         # 工具循环、子助手、批准等待（xAI/OpenAI）
   app/anthropic_agent.py # Anthropic Messages 工具循环
   app/providers.py     # 提供商目录与消息转换
@@ -199,6 +205,26 @@ grok-assistant/
   workspace/
   data/                # gitignore
 ```
+
+
+## 上线前你必须自己做的
+
+本仓库**不能**替你完成这些事（也没有假装已经完成）：
+
+1. **API 密钥**：到 xAI / OpenAI / Anthropic 控制台申请，写入设置或 `.env`。我们没有、也不会去填你的密钥。
+2. **局域网 / 手机访问**：默认只监听 `127.0.0.1`。手机要连这台电脑，请自己设 `HOST=0.0.0.0`，并设置 `KK_ACCESS_TOKEN`（或网页设置里的访问口令）。
+3. **PWA 在局域网用 HTTPS**：浏览器要求安全上下文才能完整「添加到主屏幕」。请自己用 Caddy / nginx 反代并配证书（内网可用 mkcert）。本仓库不代签证书。
+4. **Apple / Windows 签名与上架**：需要付费的 Apple Developer、Windows Authenticode / 商店账号。这里只有未签名的 Electron 打包脚本，不会代你签名或上架。
+
+## 本版本已处理的
+
+- `HOST` / `PORT` 从环境变量和 `.env` 读取（默认 `127.0.0.1:8000`），`start.sh`、`start.ps1`、`python -m app` 一致
+- 可选访问口令（`KK_ACCESS_TOKEN` / `ACCESS_TOKEN` / 设置页），保护 `/api/*`（`GET /api/health` 除外）；`POST /api/login` 写 httpOnly cookie `kk_token`
+- CORS：同源始终允许；`KK_CORS_ORIGINS` 可追加来源，且带 credentials
+- `/api/health` 增加 `version` / `host` / `bind` / `auth_required` / `has_any_provider_key` / `chromium`；`GET /api/ready` 列出未就绪项
+- 桌面端后端启动失败时显示中文错误页，而不是空白窗口
+- 设置里可写 / 清除口令且永不回显
+- `HOST=0.0.0.0` 且未设口令时，启动脚本和后端会打出中文警告
 
 ## 常见问题
 
