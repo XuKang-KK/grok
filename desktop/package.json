@@ -1,0 +1,30 @@
+{
+  "name": "kk-ai-assistant",
+  "productName": "KK AI助手",
+  "version": "1.2.0",
+  "description": "KK AI desktop wrapper for Windows and Mac",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --mac",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac"
+  },
+  "author": "KK",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.kk.aiassistant",
+    "productName": "KK AI助手",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "package.json", "icon.png"],
+    "win": { "target": [{"target": "nsis", "arch": ["x64"]}], "icon": "icon.png" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "shortcutName": "KK AI助手" },
+    "mac": { "target": ["dmg", "zip"], "icon": "icon.png", "category": "public.app-category.productivity" },
+    "dmg": { "title": "KK AI助手" }
+  }
+}

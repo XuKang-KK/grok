@@ -2,8 +2,16 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>KK AI助手</title>
+  <meta name="theme-color" content="#09090b" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="KK AI助手" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect rx='8' width='32' height='32' fill='%230b0b0d'/%3E%3Cpath d='M16 6l2.4 6.4L25 15l-6.6 2.6L16 24l-2.4-6.4L7 15l6.6-2.6z' fill='%23f4c56a'/%3E%3C/svg%3E" />
   <style>
     :root {
@@ -26,6 +34,29 @@
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
+    body {
+      padding-top: env(safe-area-inset-top);
+      padding-right: env(safe-area-inset-right);
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+    }
+    .lang-toggle { min-width: 48px; letter-spacing: 0.04em; }
+    .lang-opts { display: flex; gap: 8px; }
+    .lang-opts button {
+      flex: 1;
+      background: rgba(255,255,255,0.04);
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 0;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .lang-opts button.active {
+      color: var(--gold);
+      background: var(--gold-dim);
+      border-color: rgba(244,197,106,0.35);
+    }
     body {
       font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
       background:
@@ -550,6 +581,11 @@
       .sidebar.open { transform: none; }
       .backdrop.show { display: block; }
       button.icon { display: inline-flex; }
+      header { padding-left: 12px; padding-right: 12px; }
+      .header-actions { flex-wrap: wrap; justify-content: flex-end; }
+      .brand p { display: none; }
+      .composer-wrap { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+      textarea { font-size: 16px; }
     }
   
     .drawer-backdrop {
@@ -692,11 +728,11 @@
             </svg>
           </div>
           <div>
-            <h1>KK AI助手</h1>
-            <p>本地智能体</p>
+            <h1 data-i18n="app.name">KK AI助手</h1>
+            <p data-i18n="brand.subtitle">本地智能体</p>
           </div>
         </div>
-        <button class="new-chat" id="newChatBtn" type="button">新对话</button>
+        <button class="new-chat" id="newChatBtn" type="button" data-i18n="newChat">新对话</button>
       </div>
       <div class="session-list" id="sessionList"></div>
     </aside>
@@ -704,7 +740,7 @@
     <div class="app">
       <header>
         <div class="brand">
-          <button class="icon" id="menuBtn" type="button" title="会话列表">☰</button>
+          <button class="icon" id="menuBtn" type="button" title="会话列表" data-i18n-title="sessions.title">☰</button>
           <div class="logo" aria-hidden="true">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
               <path d="M12 2l2.2 6.6L21 11l-6.8 2.4L12 20l-2.2-6.6L3 11l6.8-2.4L12 2z" fill="#f4c56a"/>
@@ -712,35 +748,36 @@
           </div>
           <div>
             <h1 id="chatTitle">KK AI助手</h1>
-            <p>搜索 · 文件 · 浏览器 · 视觉 · 例程</p>
+            <p data-i18n="header.tagline">搜索 · 文件 · 浏览器 · 视觉 · 例程</p>
           </div>
         </div>
         <div class="header-actions">
-          <span class="model-pill" id="modelPill" title="选择模型">grok-4.6</span>
-          <button class="ghost" id="modelBtn" type="button">模型</button>
-          <button class="ghost" id="routinesBtn" type="button">例程</button>
-          <button class="ghost" id="settingsBtn" type="button">设置</button>
+          <span class="model-pill" id="modelPill" title="选择模型" data-i18n-title="model.selectTitle">grok-4.6</span>
+          <button class="ghost" id="modelBtn" type="button" data-i18n="model">模型</button>
+          <button class="ghost" id="routinesBtn" type="button" data-i18n="routines">例程</button>
+          <button class="ghost lang-toggle" id="langToggle" type="button" title="EN">EN</button>
+          <button class="ghost" id="settingsBtn" type="button" data-i18n="settings">设置</button>
         </div>
       </header>
-      <div class="warn-key" id="keyWarn">未检测到当前提供商的 API 密钥。请点右上角「设置」填写，或写入 .env。</div>
+      <div class="warn-key" id="keyWarn" data-i18n="keyWarn">未检测到当前提供商的 API 密钥。请点右上角「设置」填写，或写入 .env。</div>
       <div id="thread"></div>
       <div class="composer-wrap">
         <div class="upload-chips" id="uploadChips" hidden></div>
         <form class="composer" id="form">
           <input type="file" id="fileInput" hidden />
-          <button type="button" class="attach" id="uploadBtn" title="上传文件">
+          <button type="button" class="attach" id="uploadBtn" title="上传文件" data-i18n-title="upload">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M21.4 11.2l-8.5 8.5a5.5 5.5 0 01-7.8-7.8l8.5-8.5a3.5 3.5 0 015 5l-8.5 8.5a1.5 1.5 0 01-2.1-2.1l7.4-7.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
-          <textarea id="input" rows="1" placeholder="问点什么… Enter 发送，Shift+Enter 换行"></textarea>
-          <button id="send" type="submit" title="发送">↑</button>
+          <textarea id="input" rows="1" placeholder="问点什么… Enter 发送，Shift+Enter 换行" data-i18n-placeholder="composer.placeholder"></textarea>
+          <button id="send" type="submit" title="发送" data-i18n-title="send">↑</button>
         </form>
-        <div class="hint">工具在本机 workspace 沙箱中运行，不是安全隔离环境。中风险命令需批准。可上传图片做视觉理解。</div>
+        <div class="hint" data-i18n="composer.hint">工具在本机 workspace 沙箱中运行，不是安全隔离环境。中风险命令需批准。可上传图片做视觉理解。</div>
       </div>
     </div>
-    <aside class="model-rail" id="modelRail" aria-label="模型">
-      <div class="rail-head">模型</div>
+    <aside class="model-rail" id="modelRail" aria-label="模型" data-i18n-aria="model">
+      <div class="rail-head" data-i18n="model">模型</div>
       <div class="provider-tabs" id="providerTabs">
         <button type="button" data-provider="xai">xAI</button>
         <button type="button" data-provider="openai">OpenAI</button>
@@ -749,92 +786,158 @@
       <div class="rail-status"><span class="key-dot" id="railKeyDot"></span><span id="railKeyStatus">未保存密钥</span></div>
       <div class="model-list" id="modelList"></div>
       <div class="rail-custom">
-        <label>自定义模型 ID</label>
+        <label data-i18n="rail.customLabel">自定义模型 ID</label>
         <div class="row">
-          <input type="text" id="customModel" placeholder="输入其他模型 id" autocomplete="off" />
-          <button type="button" id="applyCustom">使用</button>
+          <input type="text" id="customModel" placeholder="输入其他模型 id" data-i18n-placeholder="rail.customPlaceholder" autocomplete="off" />
+          <button type="button" id="applyCustom" data-i18n="rail.apply">使用</button>
         </div>
       </div>
     </aside>
     </div>
   </div>
   <div class="drawer-backdrop" id="drawerBackdrop"></div>
-  <aside class="drawer" id="settingsDrawer" aria-label="设置">
+  <aside class="drawer" id="settingsDrawer" aria-label="设置" data-i18n-aria="settings">
     <div class="drawer-head">
-      <h2>设置</h2>
-      <button class="ghost" type="button" id="closeSettings">关闭</button>
+      <h2 data-i18n="settings">设置</h2>
+      <button class="ghost" type="button" id="closeSettings" data-i18n="close">关闭</button>
     </div>
     <div class="drawer-body">
       <div class="field">
-        <label>xAI API Key</label>
+        <label data-i18n="settings.language">界面语言</label>
+        <div class="lang-opts">
+          <button type="button" class="lang-opt" data-lang="zh">中文</button>
+          <button type="button" class="lang-opt" data-lang="en">EN</button>
+        </div>
+      </div>
+      <div class="field">
+        <label data-i18n="settings.xaiKey">xAI API Key</label>
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
           <span class="key-dot" id="keyDotXai"></span><span id="keyStatusXai">未保存密钥</span>
         </div>
-        <input type="password" id="keyInputXai" placeholder="已保存则留空不修改" autocomplete="off" />
-        <div class="hint">密钥只写到本机 data/settings.json，界面永不回显。到 https://console.x.ai 申请。</div>
+        <input type="password" id="keyInputXai" placeholder="已保存则留空不修改" data-i18n-placeholder="settings.keyPlaceholder" autocomplete="off" />
+        <div class="hint" data-i18n="settings.xaiHint">密钥只写到本机 data/settings.json，界面永不回显。到 https://console.x.ai 申请。</div>
       </div>
       <div class="field">
-        <label>OpenAI API Key</label>
+        <label data-i18n="settings.openaiKey">OpenAI API Key</label>
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
           <span class="key-dot" id="keyDotOpenai"></span><span id="keyStatusOpenai">未保存密钥</span>
         </div>
-        <input type="password" id="keyInputOpenai" placeholder="已保存则留空不修改" autocomplete="off" />
-        <div class="hint">环境变量 OPENAI_API_KEY 也可作为回退。到 https://platform.openai.com 申请。</div>
+        <input type="password" id="keyInputOpenai" placeholder="已保存则留空不修改" data-i18n-placeholder="settings.keyPlaceholder" autocomplete="off" />
+        <div class="hint" data-i18n="settings.openaiHint">环境变量 OPENAI_API_KEY 也可作为回退。到 https://platform.openai.com 申请。</div>
       </div>
       <div class="field">
-        <label>Anthropic API Key</label>
+        <label data-i18n="settings.anthropicKey">Anthropic API Key</label>
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
           <span class="key-dot" id="keyDotAnthropic"></span><span id="keyStatusAnthropic">未保存密钥</span>
         </div>
-        <input type="password" id="keyInputAnthropic" placeholder="已保存则留空不修改" autocomplete="off" />
-        <div class="hint">环境变量 ANTHROPIC_API_KEY 也可作为回退。到 https://console.anthropic.com 申请。</div>
+        <input type="password" id="keyInputAnthropic" placeholder="已保存则留空不修改" data-i18n-placeholder="settings.keyPlaceholder" autocomplete="off" />
+        <div class="hint" data-i18n="settings.anthropicHint">环境变量 ANTHROPIC_API_KEY 也可作为回退。到 https://console.anthropic.com 申请。</div>
       </div>
       <div class="field">
-        <label>当前对话模型</label>
+        <label data-i18n="settings.model">当前对话模型</label>
         <input type="text" id="modelInput" placeholder="grok-4.6" />
-        <div class="hint">也可在右侧「模型」面板点选。切换后对下一条消息生效。</div>
+        <div class="hint" data-i18n="settings.modelHint">也可在右侧「模型」面板点选。切换后对下一条消息生效。</div>
       </div>
       <div class="field">
-        <label>图像模型</label>
+        <label data-i18n="settings.imageModel">图像模型</label>
         <input type="text" id="imageModelInput" placeholder="grok-imagine-image-2.0" />
       </div>
       <div class="field">
-        <label class="check"><input type="checkbox" id="localBrowser" /> 允许浏览器访问 localhost / 内网（默认关闭）</label>
+        <label class="check"><input type="checkbox" id="localBrowser" /> <span data-i18n="settings.localBrowser">允许浏览器访问 localhost / 内网（默认关闭）</span></label>
       </div>
-      <button class="save-btn" type="button" id="saveSettings">保存设置</button>
+      <button class="save-btn" type="button" id="saveSettings" data-i18n="settings.save">保存设置</button>
       <p class="hint" id="settingsMsg" style="margin-top:10px"></p>
-      <h3 style="font-size:13px;margin:22px 0 8px">MCP 服务器</h3>
-      <p class="hint">从 data/mcp.json 加载。可复制仓库根目录 mcp.example.json。</p>
+      <h3 style="font-size:13px;margin:22px 0 8px" data-i18n="settings.mcpTitle">MCP 服务器</h3>
+      <p class="hint" data-i18n="settings.mcpHint">从 data/mcp.json 加载。可复制仓库根目录 mcp.example.json。</p>
       <div id="mcpList"></div>
     </div>
   </aside>
-  <aside class="drawer" id="routinesDrawer" aria-label="例程">
+  <aside class="drawer" id="routinesDrawer" aria-label="例程" data-i18n-aria="routines">
     <div class="drawer-head">
-      <h2>例程</h2>
-      <button class="ghost" type="button" id="closeRoutines">关闭</button>
+      <h2 data-i18n="routines">例程</h2>
+      <button class="ghost" type="button" id="closeRoutines" data-i18n="close">关闭</button>
     </div>
     <div class="drawer-body">
-      <p class="hint" style="margin-top:0">Cron 按时区 Asia/Shanghai。后台到点后把提示词交给助手执行。</p>
+      <p class="hint" style="margin-top:0" data-i18n="routines.intro">Cron 按时区 Asia/Shanghai。后台到点后把提示词交给助手执行。</p>
       <div class="field">
-        <label>名称</label>
-        <input type="text" id="routineName" placeholder="每日简报" />
+        <label data-i18n="routines.name">名称</label>
+        <input type="text" id="routineName" placeholder="每日简报" data-i18n-placeholder="routines.namePlaceholder" />
       </div>
       <div class="field">
-        <label>Cron（分 时 日 月 周）</label>
+        <label data-i18n="routines.cron">Cron（分 时 日 月 周）</label>
         <input type="text" id="routineCron" placeholder="0 9 * * *" />
       </div>
       <div class="field">
-        <label>提示词</label>
-        <textarea id="routinePrompt" placeholder="用 web_search 总结今天的 AI 要闻，写进 workspace/daily.md"></textarea>
+        <label data-i18n="routines.prompt">提示词</label>
+        <textarea id="routinePrompt" placeholder="用 web_search 总结今天的 AI 要闻，写进 workspace/daily.md" data-i18n-placeholder="routines.promptPlaceholder"></textarea>
       </div>
-      <button class="add-btn" type="button" id="addRoutine">添加例程</button>
+      <button class="add-btn" type="button" id="addRoutine" data-i18n="routines.add">添加例程</button>
       <p class="hint" id="routineMsg" style="margin-top:10px"></p>
-      <h3 style="font-size:13px;margin:22px 0 8px">已保存</h3>
+      <h3 style="font-size:13px;margin:22px 0 8px" data-i18n="routines.savedTitle">已保存</h3>
       <div id="routineList"></div>
     </div>
   </aside>
 
   <script>
+    const LANG_KEY = "kk-lang";
+    let I18N = { zh: {}, en: {} };
+    let currentLang = (localStorage.getItem(LANG_KEY) === "en") ? "en" : "zh";
+    document.documentElement.lang = currentLang === "en" ? "en" : "zh-CN";
+    function t(key, vars) {
+      const dict = I18N[currentLang] || I18N.zh || {};
+      const fallback = (I18N.zh || {})[key];
+      let s = dict[key] || fallback || key;
+      if (vars) {
+        Object.keys(vars).forEach(function (k) {
+          s = String(s).split("{" + k + "}").join(vars[k]);
+        });
+      }
+      return s;
+    }
+    function applyI18n() {
+      document.documentElement.lang = currentLang === "en" ? "en" : "zh-CN";
+      document.title = t("app.name");
+      document.querySelectorAll("[data-i18n]").forEach(function (el) {
+        el.textContent = t(el.getAttribute("data-i18n"));
+      });
+      document.querySelectorAll("[data-i18n-placeholder]").forEach(function (el) {
+        el.setAttribute("placeholder", t(el.getAttribute("data-i18n-placeholder")));
+      });
+      document.querySelectorAll("[data-i18n-title]").forEach(function (el) {
+        el.setAttribute("title", t(el.getAttribute("data-i18n-title")));
+      });
+      document.querySelectorAll("[data-i18n-aria]").forEach(function (el) {
+        el.setAttribute("aria-label", t(el.getAttribute("data-i18n-aria")));
+      });
+      const btn = document.getElementById("langToggle");
+      if (btn) btn.textContent = currentLang === "zh" ? t("lang.switchToEn") : t("lang.switchToZh");
+      document.querySelectorAll(".lang-opt").forEach(function (b) {
+        b.classList.toggle("active", b.getAttribute("data-lang") === currentLang);
+      });
+      if (typeof thread !== "undefined" && thread && thread.querySelector && thread.querySelector(".empty")) renderEmpty();
+      if (typeof lastSessions !== "undefined") renderSessions(lastSessions, lastActiveId);
+      if (typeof catalog !== "undefined" && typeof syncRail === "function") syncRail(catalog);
+    }
+    async function setLang(lang) {
+      currentLang = lang === "en" ? "en" : "zh";
+      localStorage.setItem(LANG_KEY, currentLang);
+      applyI18n();
+      try {
+        await fetch("/api/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ language: currentLang }),
+        });
+      } catch (e) {}
+    }
+    async function loadI18n() {
+      try {
+        const res = await fetch("/static/i18n.json");
+        I18N = await res.json();
+      } catch (e) {}
+      applyI18n();
+    }
+
     const thread = document.getElementById("thread");
     const form = document.getElementById("form");
     const input = document.getElementById("input");
@@ -853,16 +956,20 @@
     let catalog = { providers: [], provider: "xai", model: "grok-4.6", has_api_key: {} };
     const PROVIDER_LABEL = { xai: "xAI", openai: "OpenAI", anthropic: "Anthropic" };
 
-    const DEMOS = [
-      { tag: "搜索", text: "帮我搜一下 xAI Grok API 怎么做 function calling" },
-      { tag: "读文件", text: "读一下 workspace 里的 sample.txt" },
-      { tag: "写文件", text: "在 workspace 里写一个 notes.txt，写上三行待办事项" },
-      { tag: "记忆", text: "记住：我叫小康，喜欢简洁的中文回答" },
-      { tag: "网页", text: "抓取 https://example.com 的页面摘要" },
-      { tag: "浏览器", text: "用浏览器打开 https://example.com，做一次 snapshot，然后总结页面" },
-      { tag: "生图", text: "生成一张水墨风格的熊猫坐在竹林里的图片" },
-      { tag: "子助手", text: "用子助手去搜索 Playwright 官方安装步骤，并写进 workspace/playwright-notes.txt" },
-    ];
+    function demos() {
+      return [
+        { tag: t("demo.search.tag"), text: t("demo.search.text") },
+        { tag: t("demo.read.tag"), text: t("demo.read.text") },
+        { tag: t("demo.write.tag"), text: t("demo.write.text") },
+        { tag: t("demo.memory.tag"), text: t("demo.memory.text") },
+        { tag: t("demo.web.tag"), text: t("demo.web.text") },
+        { tag: t("demo.browser.tag"), text: t("demo.browser.text") },
+        { tag: t("demo.image.tag"), text: t("demo.image.text") },
+        { tag: t("demo.sub.tag"), text: t("demo.sub.text") },
+      ];
+    }
+    let lastSessions = [];
+    let lastActiveId = null;
 
     function escapeHtml(s) {
       return String(s)
@@ -893,10 +1000,10 @@
     function renderEmpty() {
       thread.innerHTML = `
         <div class="empty">
-          <h2>今天想做点什么？</h2>
-          <p>这是一个可运行的 KK AI助手。模型可以循环调用工具，直到给出最终回答。</p>
+          <h2>${escapeHtml(t("empty.title"))}</h2>
+          <p>${escapeHtml(t("empty.body"))}</p>
           <div class="chips">
-            ${DEMOS.map(d => `<button class="chip" type="button" data-text="${escapeHtml(d.text)}"><span>${d.tag}</span>${escapeHtml(d.text)}</button>`).join("")}
+            ${demos().map(d => `<button class="chip" type="button" data-text="${escapeHtml(d.text)}"><span>${d.tag}</span>${escapeHtml(d.text)}</button>`).join("")}
           </div>
         </div>`;
       thread.querySelectorAll(".chip").forEach(btn => {
@@ -910,7 +1017,7 @@
 
     function avatar(role) {
       return role === "user"
-        ? '<div class="avatar">你</div>'
+        ? '<div class="avatar">' + escapeHtml(t("avatar.you")) + '</div>'
         : '<div class="avatar">G</div>';
     }
 
@@ -947,8 +1054,10 @@
           ${avatar("assistant")}
           <div class="bubble" data-body></div>
         </div>
-        <div class="typing" data-status>正在思考…</div>
+        <div class="typing" data-status></div>
       `;
+      const st = wrap.querySelector("[data-status]");
+      if (st) st.textContent = t("thinking");
       thread.appendChild(wrap);
       thread.scrollTop = thread.scrollHeight;
       return wrap;
@@ -963,9 +1072,9 @@
       row.className = "tool " + cls + (sub ? " sub" : "");
       row.dataset.name = data.name || "";
       const img = (!running && data.image_url) ? '<img class="gen" src="' + escapeHtml(data.image_url) + '" alt="">' : "";
-      row.innerHTML = `<div class="dot"></div><div><b>${escapeHtml(data.label || data.name || "工具")}</b>
+      row.innerHTML = `<div class="dot"></div><div><b>${escapeHtml(data.label || data.name || t("tool"))}</b>
         ${data.args_summary ? " · " + escapeHtml(data.args_summary) : ""}
-        <div>${running ? "正在调用工具…" : escapeHtml(data.summary || "")}</div>${img}</div>`;
+        <div>${running ? t("tool.running") : escapeHtml(data.summary || "")}</div>${img}</div>`;
       box.appendChild(row);
       thread.scrollTop = thread.scrollHeight;
       return row;
@@ -1001,9 +1110,10 @@
       (sessions || []).forEach(s => {
         const row = document.createElement("div");
         row.className = "session-item" + (s.id === activeId ? " active" : "");
-        row.innerHTML = `<div class="meta"><div class="title">${escapeHtml(s.title || "新对话")}</div>
-          <div class="preview">${escapeHtml(s.preview || "空对话")}</div></div>
-          <button class="del" type="button" title="删除">×</button>`;
+        const title = (!s.title || s.title === "新对话") ? t("session.new") : s.title;
+        row.innerHTML = `<div class="meta"><div class="title">${escapeHtml(title)}</div>
+          <div class="preview">${escapeHtml(s.preview || t("session.empty"))}</div></div>
+          <button class="del" type="button" title="${escapeHtml(t("session.delete"))}">×</button>`;
         row.querySelector(".meta").addEventListener("click", () => selectSession(s.id));
         row.querySelector(".del").addEventListener("click", (e) => {
           e.stopPropagation();
@@ -1011,8 +1121,11 @@
         });
         sessionList.appendChild(row);
       });
+      lastSessions = sessions || [];
+      lastActiveId = activeId;
       const active = (sessions || []).find(s => s.id === activeId);
-      chatTitle.textContent = (active && active.title) || "KK AI助手";
+      const rawTitle = active && active.title;
+      chatTitle.textContent = (!rawTitle || rawTitle === "新对话") ? t("app.name") : rawTitle;
     }
 
     async function loadSessions() {
@@ -1105,7 +1218,7 @@
           body: JSON.stringify({ message: msg, session_id: sessionId }),
         });
         if (!res.ok) {
-          let detail = "请求失败 " + res.status;
+          let detail = t("requestFailed", { status: res.status });
           try {
             const j = await res.json();
             detail = j.detail || detail;
@@ -1133,26 +1246,26 @@
             let data = {};
             try { data = JSON.parse(dataLine); } catch { continue; }
             if (event === "tool_start") {
-              status.textContent = "正在调用工具…";
+              status.textContent = t("tool.running");
               addToolRow(wrap, data, true);
             } else if (event === "tool_end") {
               const rows = [...wrap.querySelectorAll(".tool.running")];
               const last = rows.reverse().find(r => r.dataset.name === data.name) || rows[0];
               if (last) last.remove();
               addToolRow(wrap, data, false);
-              status.textContent = "正在思考…";
+              status.textContent = t("thinking");
             } else if (event === "message") {
               status.remove();
               body.parentElement.style.display = "flex";
               body.innerHTML = renderMarkdown(data.content || "");
             } else if (event === "approval_required") {
-              status.textContent = "等待批准命令…";
+              status.textContent = t("waitingApproval");
               addApproval(wrap, data);
             } else if (event === "error") {
               status.remove();
               const err = document.createElement("div");
               err.className = "error-banner";
-              err.textContent = data.message || "出错了";
+              err.textContent = data.message || t("error");
               wrap.appendChild(err);
             } else if (event === "done") {
               if (data.session_id) sessionId = data.session_id;
@@ -1185,7 +1298,7 @@
     }
 
     function insertUploadNote(relPath) {
-      const note = "已上传 " + relPath;
+      const note = t("uploaded", { path: relPath });
       const cur = input.value;
       if (cur.trim()) {
         input.value = cur.replace(/\s+$/, "") + "\n" + note;
@@ -1199,7 +1312,7 @@
     async function uploadFile(file) {
       if (!file) return;
       if (file.size > 5 * 1024 * 1024) {
-        addUploadChip("文件过大，上限约 5MB", true);
+        addUploadChip(t("fileTooLarge"), true);
         return;
       }
       const fd = new FormData();
@@ -1212,7 +1325,7 @@
         try { data = await res.json(); } catch {}
         if (!res.ok) {
           const detail = data.detail;
-          const msg = typeof detail === "string" ? detail : (detail ? JSON.stringify(detail) : ("上传失败 " + res.status));
+          const msg = typeof detail === "string" ? detail : (detail ? JSON.stringify(detail) : t("uploadFailed", { status: res.status }));
           throw new Error(msg);
         }
         const rel = data.path || ("uploads/" + (data.filename || file.name));
@@ -1273,7 +1386,7 @@
         if (!dot || !st) return;
         const has = !!keys[id];
         dot.classList.toggle("on", has);
-        st.textContent = has ? "已保存密钥（不回显）" : "未保存密钥";
+        st.textContent = has ? t("settings.keySaved") : t("settings.keyMissing");
       });
     }
     function syncRail(data) {
@@ -1288,7 +1401,7 @@
       const dot = document.getElementById("railKeyDot");
       const st = document.getElementById("railKeyStatus");
       if (dot) dot.classList.toggle("on", has);
-      if (st) st.textContent = has ? "该提供商密钥已保存" : "该提供商密钥未保存";
+      if (st) st.textContent = has ? t("rail.keySaved") : t("rail.keyMissing");
       const box = document.getElementById("modelList");
       const meta = (catalog.providers || []).find(p => p.id === provider) || { models: [] };
       const models = meta.models || [];
@@ -1309,7 +1422,7 @@
       if (warn) {
         warn.style.display = has ? "none" : "block";
         const label = PROVIDER_LABEL[provider] || provider;
-        warn.textContent = has ? "" : ("未检测到 " + label + " 的 API 密钥。请点右上角「设置」填写（立即生效），或写入 .env。");
+        warn.textContent = has ? "" : t("keyWarnNamed", { provider: label });
       }
       syncKeyDot({ has_api_key: keys });
     }
@@ -1345,14 +1458,14 @@
     function addApproval(wrap, data) {
       const box = document.createElement("div");
       box.className = "approval";
-      box.innerHTML = `<div><b>需要批准才能执行</b></div>
+      box.innerHTML = `<div><b>${escapeHtml(t("approval.title"))}</b></div>
         <div class="cmd">${escapeHtml(data.command || "")}</div>
-        <div style="color:var(--muted);margin-bottom:8px">${escapeHtml(data.reason || "中风险命令")}</div>
+        <div style="color:var(--muted);margin-bottom:8px">${escapeHtml(data.reason || t("approval.reason"))}</div>
         <div class="btns">
-          <button type="button" class="yes">批准</button>
-          <button type="button" class="no">拒绝</button>
+          <button type="button" class="yes">${escapeHtml(t("approval.approve"))}</button>
+          <button type="button" class="no">${escapeHtml(t("approval.deny"))}</button>
         </div>
-        <div class="hint" style="margin-top:8px">约 ${data.timeout || 60} 秒后未操作将自动拒绝</div>`;
+        <div class="hint" style="margin-top:8px">${escapeHtml(t("approval.timeout", { seconds: data.timeout || 60 }))}</div>`;
       const tools = wrap.querySelector(".tools");
       if (tools) tools.after(box);
       else wrap.appendChild(box);
@@ -1365,7 +1478,7 @@
             body: JSON.stringify({ decision }),
           });
         } catch {}
-        box.querySelector(".hint").textContent = decision === "approve" ? "已批准，继续执行…" : "已拒绝";
+        box.querySelector(".hint").textContent = decision === "approve" ? t("approval.approved") : t("approval.denied");
       }
       box.querySelector(".yes").addEventListener("click", () => decide("approve"));
       box.querySelector(".no").addEventListener("click", () => decide("deny"));
@@ -1403,11 +1516,11 @@
       const box = document.getElementById("mcpList");
       const servers = mcp.servers || [];
       if (!servers.length) {
-        box.innerHTML = '<p class="hint">尚未配置。复制 mcp.example.json 为 data/mcp.json 后刷新。</p>';
+        box.innerHTML = '<p class="hint">' + escapeHtml(t("mcp.empty")) + '</p>';
       } else {
         box.innerHTML = servers.map(s => `<div class="mcp-item">
-          <div class="name">${escapeHtml(s.name)} ${s.enabled ? (s.ok ? "· 已连接" : "· 失败") : "· 未启用"}</div>
-          <div class="meta">${escapeHtml((s.tools || []).join(", ") || "无工具")}</div>
+          <div class="name">${escapeHtml(s.name)} ${s.enabled ? (s.ok ? "· " + t("mcp.connected") : "· " + t("mcp.failed")) : "· " + t("mcp.disabled")}</div>
+          <div class="meta">${escapeHtml((s.tools || []).join(", ") || t("mcp.noTools"))}</div>
           ${s.error ? '<div class="err">' + escapeHtml(s.error) + "</div>" : ""}
           ${s.note ? '<div class="hint">' + escapeHtml(s.note) + "</div>" : ""}
         </div>`).join("");
@@ -1420,7 +1533,7 @@
       const box = document.getElementById("routineList");
       const items = data.routines || [];
       if (!items.length) {
-        box.innerHTML = '<p class="hint">还没有例程。</p>';
+        box.innerHTML = '<p class="hint">' + escapeHtml(t("routines.empty")) + '</p>';
         return;
       }
       box.innerHTML = "";
@@ -1428,12 +1541,12 @@
         const el = document.createElement("div");
         el.className = "routine-item";
         el.innerHTML = `<div class="name">${escapeHtml(r.name)}</div>
-          <div class="meta">${escapeHtml(r.cron)} · ${r.paused ? "已暂停" : "运行中"}
-          ${r.last_run_at ? "<br>上次：" + escapeHtml(r.last_run_at) : ""}
+          <div class="meta">${escapeHtml(r.cron)} · ${r.paused ? t("routines.paused") : t("routines.running")}
+          ${r.last_run_at ? "<br>" + t("routines.lastRun") + escapeHtml(r.last_run_at) : ""}
           ${r.last_status ? " · " + escapeHtml(r.last_status) : ""}</div>
           <div class="actions">
-            <button type="button" data-act="${r.paused ? "resume" : "pause"}">${r.paused ? "恢复" : "暂停"}</button>
-            <button type="button" data-act="delete">删除</button>
+            <button type="button" data-act="${r.paused ? "resume" : "pause"}">${r.paused ? t("routines.resume") : t("routines.pause")}</button>
+            <button type="button" data-act="delete">${t("routines.delete")}</button>
           </div>`;
         el.querySelectorAll("button").forEach(btn => {
           btn.addEventListener("click", async () => {
@@ -1463,6 +1576,7 @@
         model: document.getElementById("modelInput").value.trim(),
         image_model: document.getElementById("imageModelInput").value.trim(),
         allow_local_browser: document.getElementById("localBrowser").checked,
+        language: currentLang,
       };
       const xai = document.getElementById("keyInputXai").value;
       const oai = document.getElementById("keyInputOpenai").value;
@@ -1479,7 +1593,7 @@
       document.getElementById("keyInputXai").value = "";
       document.getElementById("keyInputOpenai").value = "";
       document.getElementById("keyInputAnthropic").value = "";
-      document.getElementById("settingsMsg").textContent = res.ok ? "已保存，立即生效。" : (data.detail || "保存失败");
+      document.getElementById("settingsMsg").textContent = res.ok ? t("settings.saved") : (data.detail || t("settings.saveFailed"));
       syncRail(data);
       loadCatalog().catch(() => {});
     });
@@ -1497,10 +1611,10 @@
       const data = await res.json();
       const msg = document.getElementById("routineMsg");
       if (!res.ok) {
-        msg.textContent = typeof data.detail === "string" ? data.detail : "创建失败";
+        msg.textContent = typeof data.detail === "string" ? data.detail : t("routines.createFailed");
         return;
       }
-      msg.textContent = "已添加";
+      msg.textContent = t("routines.added");
       document.getElementById("routineName").value = "";
       document.getElementById("routinePrompt").value = "";
       loadRoutinesPanel();
@@ -1527,8 +1641,42 @@
       }
     });
     modelPill.addEventListener("click", toggleRail);
-    loadCatalog().catch(() => {});
-    loadHistory();
+    const langToggle = document.getElementById("langToggle");
+    if (langToggle) {
+      langToggle.addEventListener("click", () => setLang(currentLang === "zh" ? "en" : "zh"));
+    }
+    document.querySelectorAll(".lang-opt").forEach((btn) => {
+      btn.addEventListener("click", () => setLang(btn.getAttribute("data-lang")));
+    });
+    async function hydrateLang() {
+      await loadI18n();
+      try {
+        const res = await fetch("/api/settings");
+        const data = await res.json();
+        const local = localStorage.getItem(LANG_KEY);
+        const server = (data.language === "en" || data.language === "zh") ? data.language : "zh";
+        if (local === "en" || local === "zh") {
+          if (local !== server) {
+            fetch("/api/settings", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ language: local }),
+            }).catch(() => {});
+          }
+        } else {
+          currentLang = server;
+          localStorage.setItem(LANG_KEY, currentLang);
+          applyI18n();
+        }
+      } catch (e) {}
+    }
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+    hydrateLang().then(() => {
+      loadCatalog().catch(() => {});
+      loadHistory();
+    });
   </script>
 
 </body>

@@ -27,7 +27,7 @@ ENV_FILE = PROJECT_ROOT / ".env"
 DEFAULT_MODEL = default_model_for(DEFAULT_PROVIDER)
 
 _SECRET_KEYS = frozenset({"xai_api_key", "openai_api_key", "anthropic_api_key"})
-_STR_KEYS = frozenset({"provider", "model", "grok_model", "image_model"})
+_STR_KEYS = frozenset({"provider", "model", "grok_model", "image_model", "language"})
 
 
 def _ensure_data_dir() -> None:
@@ -59,6 +59,9 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
             current[key] = str(value).strip()
         elif key == "provider":
             current[key] = normalize_provider(str(value) if value is not None else "")
+        elif key == "language":
+            raw = str(value or "").strip().lower().replace("_", "-")
+            current[key] = "en" if raw in {"en", "en-us", "en-gb", "english"} else "zh"
         elif key in _STR_KEYS:
             current[key] = str(value).strip()
         elif key == "allow_local_browser":
@@ -125,6 +128,12 @@ def get_image_model() -> str:
     )
 
 
+def get_language() -> str:
+    data = load_settings()
+    raw = str(data.get("language") or "").strip().lower()
+    return "en" if raw == "en" else "zh"
+
+
 def allow_local_browser() -> bool:
     data = load_settings()
     if "allow_local_browser" in data:
@@ -150,6 +159,7 @@ def public_settings() -> dict[str, Any]:
         "model": get_model(provider),
         "image_model": get_image_model(),
         "allow_local_browser": allow_local_browser(),
+        "language": get_language(),
     }
 
 

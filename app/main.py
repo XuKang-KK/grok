@@ -92,6 +92,7 @@ class SettingsUpdate(BaseModel):
     grok_model: str | None = None
     image_model: str | None = None
     allow_local_browser: bool | None = None
+    language: str | None = None
 
 
 class ModelSelect(BaseModel):
@@ -121,6 +122,7 @@ def _status_payload(sess: Session | None = None) -> dict[str, Any]:
         "model": model,
         "image_model": pub["image_model"],
         "allow_local_browser": pub["allow_local_browser"],
+        "language": pub.get("language") or "zh",
         "workspace": str((PROJECT_ROOT / "workspace").resolve()),
         "session_id": active.id,
         "version": __version__,
@@ -149,6 +151,23 @@ def _session_view(sess: Session) -> dict[str, Any]:
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/manifest.webmanifest")
+async def web_manifest() -> FileResponse:
+    return FileResponse(
+        STATIC_DIR / "manifest.webmanifest",
+        media_type="application/manifest+json",
+    )
+
+
+@app.get("/sw.js")
+async def service_worker() -> FileResponse:
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.get("/api/health")
@@ -181,6 +200,8 @@ async def put_settings(req: SettingsUpdate) -> dict[str, Any]:
         updates["image_model"] = req.image_model
     if req.allow_local_browser is not None:
         updates["allow_local_browser"] = req.allow_local_browser
+    if req.language is not None:
+        updates["language"] = req.language
     save_settings(updates)
     if "provider" in updates or "model" in updates or "grok_model" in updates:
         sess = store.active()

@@ -17,3 +17,11 @@ data/
 workspace/uploads/
 workspace/generated/
 workspace/screenshots/
+
+# desktop / mobile build artifacts
+desktop/node_modules/
+desktop/dist/
+desktop/out/
+mobile/node_modules/
+mobile/android/
+mobile/ios/

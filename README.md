@@ -1,6 +1,6 @@
-# KK AI助手（本地 v1.1）
+# KK AI助手（本地 v1.2）
 
-一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.1 在右侧聊天面板加入模型选择器，支持 xAI / OpenAI / Anthropic 三个提供商。
+一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.2 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文；右侧模型选择器支持 xAI / OpenAI / Anthropic。
 
 - 后端：FastAPI；xAI / OpenAI 走 OpenAI 兼容 Chat Completions，Anthropic 走 Messages API + 工具循环（默认 `grok-4.6`）
 - 前端：单页中文深色聊天界面（左侧多会话，右侧「模型」面板，设置 / 例程抽屉）
@@ -10,7 +10,7 @@
 
 ## 获取 API Key（多提供商）
 
-v1.1 支持三个提供商，聊天对话框**右侧「模型」面板**可切换，对下一条消息生效（同时写入当前会话和默认设置）。
+支持三个提供商，聊天对话框**右侧「模型」面板**可切换，对下一条消息生效（同时写入当前会话和默认设置）。
 
 | 提供商 | 基址 | 预置模型 |
 |--------|------|----------|
@@ -51,6 +51,15 @@ cd grok-assistant
 `start.sh` 会：创建 venv、安装依赖、缺少 `.env` 时复制示例、若本机还没有 Chromium 则执行 `python -m playwright install chromium`，然后在 `127.0.0.1:8000` 启动。
 
 浏览器打开：http://127.0.0.1:8000
+
+## 网页 / 桌面 / 手机 / 语言
+
+| 端 | 怎么用 |
+|----|--------|
+| **网页** | 本仓库就是 Web 应用。窄屏下侧栏与模型轨会收起。 |
+| **桌面** | `desktop/` 下的 Electron 封装。见 `desktop/README.md`：`npm install` 后启动，可打 Windows NSIS 与 macOS dmg/zip。未签名。 |
+| **手机** | **PWA 即 mobile client v1**（同一套 UI）。Android Chrome / iOS Safari「添加到主屏幕」。见 `mobile/README.md`。不拆第二套前端，也不填远程服务器地址。 |
+| **语言** | 默认中文。顶栏「EN / 中文」与设置里的「界面语言」可切换。选择写入 localStorage（kk-lang）并保存到 data/settings.json 的 language 字段。模型 id 与提供商名称不翻译。 |
 
 也可以：
 
@@ -157,7 +166,7 @@ source venv/bin/activate
 pytest
 ```
 
-覆盖：路径穿越、危险命令硬拦截、中风险分类、`fetch_url` / 浏览器 URL 封锁、上传路径、cron 解析、子助手不能递归、设置接口不泄露密钥、MCP 示例配置可干净加载、三家提供商目录与预置模型 id、缺 OpenAI/Anthropic 密钥时的中文 503。
+覆盖：路径穿越、危险命令硬拦截、中风险分类、`fetch_url` / 浏览器 URL 封锁、上传路径、cron 解析、子助手不能递归、设置接口不泄露密钥、MCP 示例配置可干净加载、三家提供商目录与预置模型 id、缺 OpenAI/Anthropic 密钥时的中文 503、i18n 中英文字典、语言设置默认中文。
 
 ## 项目结构
 
@@ -180,6 +189,12 @@ grok-assistant/
   app/routines.py      # Asia/Shanghai cron
   app/images.py        # 图像生成
   app/static/index.html
+  app/static/i18n.json
+  app/static/manifest.webmanifest
+  app/static/sw.js
+  app/static/icons/
+  desktop/             # Electron wrapper
+  mobile/README.md     # PWA mobile client v1
   tests/
   workspace/
   data/                # gitignore
