@@ -26,7 +26,7 @@ from app.tools import (
     tool_label,
 )
 
-DEFAULT_MODEL = "grok-4.6"
+DEFAULT_MODEL = "gpt-5.6-terra"
 MAX_TOOL_ITERS = 8
 MAX_SUBAGENT_ITERS = 5
 SUBAGENT_CONCURRENCY = 2
@@ -470,7 +470,12 @@ def run_turn(
       {"type": "message", "content": "..."}
       {"type": "error", "message": "..."}
     """
-    pid = normalize_provider(provider or get_provider() or DEFAULT_PROVIDER)
+    # New UI always stores ccapi. Leftover official providers still work if saved.
+    if provider:
+        pid = normalize_provider(provider)
+    else:
+        stored = get_provider()
+        pid = stored if stored in ("xai", "openai", "anthropic") else DEFAULT_PROVIDER
     mid = (model or "").strip() or get_model(pid)
     prev_provider = getattr(_tls, "provider", None)
     prev_model = getattr(_tls, "model", None)

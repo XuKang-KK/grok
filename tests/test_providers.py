@@ -6,29 +6,22 @@ import json
 
 from fastapi.testclient import TestClient
 
-from app.providers import PROVIDERS
+from app.providers import FALLBACK_MODEL_IDS, family_for_model, model_label, strip_price_fields
 from app.settings import public_settings, save_settings
 
 
-PRESET_IDS = {
-    "ccapi": [
-        "gpt-5.6",
-        "gpt-5",
-        "claude-sonnet-5",
-        "claude-opus-5",
-        "grok-4.6",
-        "deepseek-v3.2",
-        "gemini-2.5-flash",
-    ],
-    "xai": ["grok-4.6", "grok-4.5"],
-    "openai": ["gpt-5.6", "gpt-5", "gpt-5-mini", "gpt-5-chat-latest"],
-    "anthropic": [
-        "claude-opus-5",
-        "claude-sonnet-5",
-        "claude-fable-5",
-        "claude-haiku-4-5",
-    ],
-}
+PRICE_WORDS = ("price", "pricing", "cost", "fee")
+
+
+def _assert_no_price_keys(obj, path="$"):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            low = str(key).lower()
+            assert low not in PRICE_WORDS, (path, key)
+            _assert_no_price_keys(value, f"{path}.{key}")
+    elif isinstance(obj, list):
+        for i, value in enumerate(obj):
+            _assert_no_price_keys(value, f"{path}[{i}]")
 
 
 def _isolate_settings(tmp_path, monkeypatch) -> None:
@@ -44,7 +37,44 @@ def _isolate_settings(tmp_path, monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_models_catalog_has_providers_and_preset_ids(tmp_path, monkeypatch):
+def test_family_for_model_grouping():
+    assert family_for_model("gpt-5.6") == "gpt"
+    assert family_for_model("openai/gpt-5.2") == "gpt"
+    assert family_for_model("gpt-5-mini") == "gpt"
+    assert family_for_model("chatgpt-4o") == "gpt"
+    assert family_for_model("o1-preview") == "gpt"
+    assert family_for_model("o3-mini") == "gpt"
+    assert family_for_model("o4-mini") == "gpt"
+    assert family_for_model("claude-sonnet-5") == "claude"
+    assert family_for_model("anthropic/claude-opus-5") == "claude"
+    assert family_for_model("grok-4.6") == "grok"
+    assert family_for_model("xai/grok-4.5") == "grok"
+    assert family_for_model("deepseek-v3.2") is None
+    assert family_for_model("gemini-2.5-flash") is None
+    assert family_for_model("") is None
+    assert model_label("gpt-5.6") == "GPT-5.6"
+    assert model_label("openai/gpt-5.2") == "GPT-5.2"
+    dirty = {
+        "id": "gpt-5.6",
+        "price": 1.2,
+        "pricing": {"input": 1},
+        "cost": 3,
+        "fee": 4,
+        "ok": True,
+        "nested": {"cost": 9, "id": "x"},
+    }
+    clean = strip_price_fields(dirty)
+    assert clean["id"] == "gpt-5.6"
+    assert clean["ok"] is True
+    assert "price" not in clean
+    assert "pricing" not in clean
+    assert "cost" not in clean
+    assert "fee" not in clean
+    assert "cost" not in clean["nested"]
+    assert clean["nested"]["id"] == "x"
+
+
+def test_models_catalog_has_families_and_no_prices(tmp_path, monkeypatch):
     _isolate_settings(tmp_path, monkeypatch)
     from app.main import app
 
@@ -52,25 +82,51 @@ def test_models_catalog_has_providers_and_preset_ids(tmp_path, monkeypatch):
     res = client.get("/api/models")
     assert res.status_code == 200
     body = res.json()
-    providers = {row["id"]: row for row in body.get("providers") or []}
-    assert set(providers) == {"ccapi", "xai", "openai", "anthropic"}
-    assert list(providers)[0] == "ccapi"
-    assert providers["ccapi"]["name"] == "中转站"
-    assert providers["ccapi"]["compat"] == "openai"
-    assert body.get("ccapi_base_url") == "https://api.ccapi.ai/v1"
-    assert "https://api.ccapi.ai/v1" in (body.get("ccapi_base_presets") or [])
-    for pid, models in PRESET_IDS.items():
-        assert providers[pid]["name"] == PROVIDERS[pid]["name"]
-        got = providers[pid]["models"]
-        for mid in models:
-            assert mid in got, (pid, mid, got)
-    assert "has_api_key" in body
-    assert set(body["has_api_key"]) == {"ccapi", "xai", "openai", "anthropic"}
+    assert body.get("ok") is True
+    assert body.get("source") == "fallback"
+    assert body.get("provider") == "ccapi"
+    assert body.get("family") in {"gpt", "claude", "grok"}
+    assert body.get("has_relay_key") is False
+    families = body.get("families") or {}
+    assert set(families) == {"gpt", "claude", "grok"}
+    gpt_ids = [row["id"] for row in families["gpt"]]
+    claude_ids = [row["id"] for row in families["claude"]]
+    grok_ids = [row["id"] for row in families["grok"]]
+    assert "gpt-5.6-terra" in gpt_ids
+    assert "claude-sonnet-5" in claude_ids
+    assert "grok-4.5" in grok_ids
+    for mid in FALLBACK_MODEL_IDS:
+        fam = family_for_model(mid)
+        assert fam in families
+        assert mid in [row["id"] for row in families[fam]]
+    gpt56 = next(row for row in families["gpt"] if row["id"] == "gpt-5.6-terra")
+    assert "GPT-5.6" in gpt56["label"]
+    assert "providers" not in body
+    assert "ccapi_base_url" not in body
     blob = json.dumps(body)
     assert "api_key" not in body or body.get("api_key") in (None, "", False)
     for banned in ("xai_api_key", "openai_api_key", "anthropic_api_key", "ccapi_api_key"):
         assert banned not in body
         assert f'"{banned}"' not in blob
+    _assert_no_price_keys(body)
+
+
+def test_models_fallback_list_works_without_network(tmp_path, monkeypatch):
+    _isolate_settings(tmp_path, monkeypatch)
+
+    def boom(*args, **kwargs):
+        raise AssertionError("fallback path must not hit the network")
+
+    monkeypatch.setattr("app.settings.fetch_ccapi_models", boom)
+    from app.settings import models_catalog
+
+    body = models_catalog()
+    assert body["source"] == "fallback"
+    assert body["has_relay_key"] is False
+    assert body["families"]["gpt"]
+    assert body["families"]["claude"]
+    assert body["families"]["grok"]
+    _assert_no_price_keys(body)
 
 
 def test_settings_put_does_not_echo_secrets(tmp_path, monkeypatch):
@@ -227,7 +283,7 @@ def test_default_provider_is_ccapi_unless_saved(tmp_path, monkeypatch):
     assert get_provider() == "anthropic"
 
 
-def test_ccapi_live_catalog_merges_when_mocked(tmp_path, monkeypatch):
+def test_ccapi_live_catalog_groups_when_mocked(tmp_path, monkeypatch):
     _isolate_settings(tmp_path, monkeypatch)
     save_settings({"ccapi_api_key": "sk-test-not-real", "provider": "ccapi", "model": "gpt-5.6"})
     monkeypatch.setattr("app.settings._skip_remote_model_fetch", lambda: False)
@@ -235,16 +291,41 @@ def test_ccapi_live_catalog_merges_when_mocked(tmp_path, monkeypatch):
     def fake_fetch(base_url, api_key, *, timeout=8.0):
         assert "ccapi" in base_url
         assert api_key == "sk-test-not-real"
-        return ["openai/gpt-5.2", "gpt-5.6"]
+        return ["openai/gpt-5.2", "gpt-5.6", "claude-sonnet-5", "grok-4.6", "deepseek-v3.2"]
 
     monkeypatch.setattr("app.settings.fetch_ccapi_models", fake_fetch)
     from app.settings import models_catalog
 
     body = models_catalog()
-    ccapi = next(row for row in body["providers"] if row["id"] == "ccapi")
-    assert "gpt-5.6" in ccapi["models"]
-    assert "openai/gpt-5.2" in ccapi["models"]
+    assert body["source"] == "live"
+    assert body["has_relay_key"] is True
+    assert body["provider"] == "ccapi"
+    gpt_ids = [row["id"] for row in body["families"]["gpt"]]
+    assert "gpt-5.6-terra" in gpt_ids
+    assert "openai/gpt-5.2" in gpt_ids
+    assert "claude-sonnet-5" in [row["id"] for row in body["families"]["claude"]]
+    assert "grok-4.6" in [row["id"] for row in body["families"]["grok"]]
+    assert "deepseek-v3.2" not in json.dumps(body)
     assert json.dumps(body).count("sk-test-not-real") == 0
+    _assert_no_price_keys(body)
+
+
+def test_put_model_family_stores_ccapi(tmp_path, monkeypatch):
+    _isolate_settings(tmp_path, monkeypatch)
+    from app.main import app
+
+    client = TestClient(app)
+    res = client.put("/api/model", json={"family": "claude", "model": "claude-sonnet-5"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body.get("provider") == "ccapi"
+    assert body.get("model") == "claude-sonnet-5"
+    assert body.get("family") == "claude"
+    _assert_no_price_keys(body)
+    from app.settings import get_model, get_provider
+
+    assert get_provider() == "ccapi"
+    assert get_model() == "claude-sonnet-5"
 
 
 def test_fetch_ccapi_models_uses_mock_not_network(monkeypatch):
@@ -255,7 +336,12 @@ def test_fetch_ccapi_models_uses_mock_not_network(monkeypatch):
             return None
 
         def json(self):
-            return {"data": [{"id": "deepseek-v3.2"}, {"id": "gpt-5.6"}]}
+            return {
+                "data": [
+                    {"id": "deepseek-v3.2", "price": 0.1, "pricing": {"in": 1}},
+                    {"id": "gpt-5.6", "cost": 2, "fee": 3},
+                ]
+            }
 
     class DummyClient:
         def __init__(self, *args, **kwargs):

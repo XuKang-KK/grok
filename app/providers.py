@@ -32,15 +32,26 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "id": "ccapi",
         "name": "中转站",
         "base_url": CCAPI_BASE_URL,
-        "default_model": "gpt-5.6",
+        "default_model": "gpt-5.6-terra",
         "models": [
-            "gpt-5.6",
-            "gpt-5",
-            "claude-sonnet-5",
+            "gpt-5-mini",
+            "gpt-5.1",
+            "gpt-5.2",
+            "gpt-5.3-codex",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.4-nano",
+            "gpt-5.5",
+            "gpt-5.6-luna",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "claude-haiku-4-5-20251001",
+            "claude-opus-4-6",
             "claude-opus-5",
-            "grok-4.6",
-            "deepseek-v3.2",
-            "gemini-2.5-flash",
+            "claude-sonnet-4-6",
+            "claude-sonnet-5",
+            "cursor-opus-4-8",
+            "grok-4.5",
         ],
         "key_field": "ccapi_api_key",
         "env_key": "CCAPI_API_KEY",
@@ -136,36 +147,227 @@ def missing_key_message(provider: str | None) -> str:
     )
 
 
+FAMILY_IDS = ("gpt", "claude", "grok")
+DEFAULT_CHAT_MODEL = "gpt-5.6-terra"
+
+FALLBACK_MODEL_IDS = (
+    "gpt-5-mini",
+    "gpt-5.1",
+    "gpt-5.2",
+    "gpt-5.3-codex",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.5",
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "claude-haiku-4-5-20251001",
+    "claude-opus-4-6",
+    "claude-opus-4-6-high",
+    "claude-opus-4-6-low",
+    "claude-opus-4-6-max",
+    "claude-opus-4-6-medium",
+    "claude-opus-4-6-thinking",
+    "claude-opus-4-7",
+    "claude-opus-4-7-high",
+    "claude-opus-4-7-low",
+    "claude-opus-4-7-max",
+    "claude-opus-4-7-medium",
+    "claude-opus-4-7-thinking",
+    "claude-opus-4-7-xhigh",
+    "claude-opus-4-8",
+    "claude-opus-4-8-high",
+    "claude-opus-4-8-low",
+    "claude-opus-4-8-max",
+    "claude-opus-4-8-xhigh",
+    "claude-opus-5",
+    "claude-sonnet-4-6",
+    "claude-sonnet-5",
+    "cursor-opus-4-8",
+    "grok-4.5",
+)
+
+_PRICE_KEYS = frozenset({"price", "pricing", "cost", "fee"})
+
+
+def family_for_model(model_id: str | None) -> str | None:
+    """Map a model id to a surface family, or None if it stays off the three tabs."""
+    raw = str(model_id or "").strip().lower()
+    if not raw:
+        return None
+    leaf = raw.rsplit("/", 1)[-1]
+    # Chat families only — omit Gemini / Kimi / image / video ids from the rail.
+    if any(token in raw for token in ("gemini", "kimi", "image", "imagine", "video", "sora")):
+        return None
+    if "gpt" in raw or "chatgpt" in raw or leaf.startswith(("o1", "o3", "o4")):
+        return "gpt"
+    if "claude" in raw or leaf.startswith("cursor-opus") or raw.startswith("cursor-opus"):
+        return "claude"
+    if "grok" in raw:
+        return "grok"
+    return None
+
+
+def normalize_family(value: str | None) -> str:
+    raw = (value or "").strip().lower()
+    if raw in FAMILY_IDS:
+        return raw
+    aliases = {
+        "openai": "gpt",
+        "chatgpt": "gpt",
+        "anthropic": "claude",
+        "xai": "grok",
+        "x.ai": "grok",
+    }
+    mapped = aliases.get(raw)
+    if mapped:
+        return mapped
+    guessed = family_for_model(raw)
+    return guessed if guessed in FAMILY_IDS else "gpt"
+
+
+def model_label(model_id: str | None) -> str:
+    """Friendly name from an id: gpt-5.6-terra → GPT-5.6 Terra."""
+    raw = str(model_id or "").strip()
+    leaf = raw.rsplit("/", 1)[-1] or raw
+    if not leaf:
+        return raw
+    low = leaf.lower()
+    brand = None
+    rest = leaf
+    for prefix, pretty in (
+        ("chatgpt", "ChatGPT"),
+        ("cursor-opus", "Cursor Opus"),
+        ("gpt", "GPT"),
+        ("claude", "Claude"),
+        ("grok", "Grok"),
+    ):
+        if low == prefix:
+            return pretty
+        if low.startswith(prefix):
+            brand = pretty
+            rest = leaf[len(prefix) :].lstrip("-_")
+            break
+    if brand is None:
+        if low.startswith(("o1", "o3", "o4")):
+            head = leaf.split("-", 1)[0]
+            brand = head[0].upper() + head[1:]
+            rest = leaf[len(head) :].lstrip("-_")
+        else:
+            return leaf
+    if not rest:
+        return brand
+    chunks = [brand]
+    for part in (p for p in rest.split("-") if p):
+        if any(ch.isdigit() for ch in part) and not any(ch.isalpha() for ch in part):
+            chunks[-1] = chunks[-1] + "-" + part
+        else:
+            chunks.append(part[0].upper() + part[1:])
+    return " ".join(chunks)
+
+
+def strip_price_fields(obj: Any) -> Any:
+    """Drop price / pricing / cost / fee keys anywhere in a JSON-like tree."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for key, value in obj.items():
+            if str(key).lower() in _PRICE_KEYS:
+                continue
+            out[key] = strip_price_fields(value)
+        return out
+    if isinstance(obj, list):
+        return [strip_price_fields(item) for item in obj]
+    return obj
+
+
+def model_entry(model_id: str) -> dict[str, str]:
+    return {"id": str(model_id), "label": model_label(model_id)}
+
+
+def group_models_by_family(ids: list[str] | None) -> dict[str, list[dict[str, str]]]:
+    families: dict[str, list[dict[str, str]]] = {fid: [] for fid in FAMILY_IDS}
+    seen: dict[str, set[str]] = {fid: set() for fid in FAMILY_IDS}
+    for mid in ids or []:
+        name = str(mid or "").strip()
+        fam = family_for_model(name)
+        if fam not in families or name in seen[fam]:
+            continue
+        seen[fam].add(name)
+        families[fam].append(model_entry(name))
+    return families
+
+
+def fallback_families() -> dict[str, list[dict[str, str]]]:
+    return group_models_by_family(list(FALLBACK_MODEL_IDS))
+
+
+def first_model_of(
+    families: dict[str, list[dict[str, str]]] | None,
+    family: str | None = "gpt",
+) -> str:
+    fam = normalize_family(family)
+    rows = (families or {}).get(fam) or []
+    if fam == "gpt":
+        for row in rows:
+            if str(row.get("id") or "") == DEFAULT_CHAT_MODEL:
+                return DEFAULT_CHAT_MODEL
+    if rows:
+        return str(rows[0]["id"])
+    for fid in FAMILY_IDS:
+        extra = (families or {}).get(fid) or []
+        if extra:
+            return str(extra[0]["id"])
+    return DEFAULT_CHAT_MODEL
+
+
+def family_catalog_payload(
+    *,
+    model_ids: list[str] | None,
+    source: str,
+    provider: str,
+    model: str,
+    has_relay_key: bool,
+    family: str | None = None,
+) -> dict[str, Any]:
+    ids = list(model_ids or FALLBACK_MODEL_IDS)
+    families = group_models_by_family(ids)
+    mid = str(model or "").strip()
+    fam = family_for_model(mid) or (normalize_family(family) if family else "gpt")
+    if fam not in FAMILY_IDS:
+        fam = "gpt"
+    if not mid:
+        mid = first_model_of(families, fam)
+    payload = {
+        "ok": True,
+        "source": "live" if source == "live" else "fallback",
+        "family": fam,
+        "families": families,
+        "provider": "ccapi",
+        "model": mid,
+        "has_relay_key": bool(has_relay_key),
+    }
+    return strip_price_fields(payload)
+
+
 def catalog_payload(
     *,
     has_api_key: dict[str, bool],
     provider: str,
     model: str,
+    model_ids: list[str] | None = None,
+    source: str = "fallback",
+    family: str | None = None,
 ) -> dict[str, Any]:
-    rows = []
-    for pid in PROVIDER_IDS:
-        meta = PROVIDERS[pid]
-        rows.append(
-            {
-                "id": pid,
-                "name": meta["name"],
-                "models": list(meta["models"]),
-                "default_model": meta["default_model"],
-                "has_key": bool(has_api_key.get(pid)),
-                "compat": meta["compat"],
-                "base_url": meta["base_url"],
-                "configurable_base": bool(meta.get("configurable_base")),
-            }
-        )
-    return {
-        "ok": True,
-        "providers": rows,
-        "provider": normalize_provider(provider),
-        "model": model,
-        "has_api_key": {pid: bool(has_api_key.get(pid)) for pid in PROVIDER_IDS},
-        "ccapi_base_url": CCAPI_BASE_URL,
-        "ccapi_base_presets": list(CCAPI_BASE_PRESETS),
-    }
+    """Consumer catalog: GPT / Claude / Grok families. No prices or base URLs."""
+    return family_catalog_payload(
+        model_ids=model_ids,
+        source=source,
+        provider=provider,
+        model=model,
+        has_relay_key=bool((has_api_key or {}).get("ccapi")),
+        family=family,
+    )
 
 
 def normalize_ccapi_base_url(value: str | None) -> str:
@@ -227,7 +429,7 @@ def fetch_ccapi_models(base_url: str, api_key: str, *, timeout: float = 8.0) -> 
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             resp = client.get(url, headers=headers)
             resp.raise_for_status()
-            payload = resp.json()
+            payload = strip_price_fields(resp.json())
     except Exception:
         return []
     return parse_openai_model_ids(payload)

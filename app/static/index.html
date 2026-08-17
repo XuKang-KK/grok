@@ -177,27 +177,69 @@
       backdrop-filter: blur(16px);
     }
     .rail-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
       padding: 16px 14px 10px;
       font-size: 13px;
       font-weight: 650;
       letter-spacing: 0.04em;
       color: var(--gold);
     }
+    .rail-refresh {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+    .rail-refresh:hover {
+      color: var(--gold);
+      border-color: rgba(244,197,106,0.35);
+    }
     .provider-tabs {
       display: flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       gap: 6px;
       padding: 0 12px 10px;
     }
     .provider-tabs button {
-      flex: 1 1 calc(50% - 6px);
+      flex: 1 1 0;
+      min-width: 0;
       background: rgba(255,255,255,0.04);
       color: var(--muted);
       border: 1px solid var(--line);
       border-radius: 999px;
-      padding: 6px 0;
-      font-size: 11px;
+      padding: 7px 0;
+      font-size: 12px;
       cursor: pointer;
+    }
+    .advanced-direct {
+      margin: 8px 0 18px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 4px 12px 8px;
+      background: rgba(255,255,255,0.02);
+    }
+    .advanced-direct summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 10px 0;
+      list-style: none;
+    }
+    .advanced-direct summary::-webkit-details-marker { display: none; }
+    .advanced-direct[open] summary { color: var(--gold); }
+    .model-row .sub {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
     }
     .rail-base {
       margin: 0 12px 8px;
@@ -832,14 +874,14 @@
           </div>
         </div>
         <div class="header-actions">
-          <span class="model-pill" id="modelPill" title="选择模型" data-i18n-title="model.selectTitle">grok-4.6</span>
+          <span class="model-pill" id="modelPill" title="选择模型" data-i18n-title="model.selectTitle">GPT-5.6</span>
           <button class="ghost" id="modelBtn" type="button" data-i18n="model">模型</button>
           <button class="ghost" id="routinesBtn" type="button" data-i18n="routines">例程</button>
           <button class="ghost lang-toggle" id="langToggle" type="button" title="EN">EN</button>
           <button class="ghost" id="settingsBtn" type="button" data-i18n="settings">设置</button>
         </div>
       </header>
-      <div class="warn-key" id="keyWarn" data-i18n="keyWarn">未检测到当前提供商的 API 密钥。请点右上角「设置」填写，或写入 .env。</div>
+      <div class="warn-key" id="keyWarn" data-i18n="keyWarn">管理员尚未配置中转站密钥（设置里填写），普通用户看不到三家官方 Key 表单作为主路径。</div>
       <div id="thread"></div>
       <div class="composer-wrap">
         <div class="upload-chips" id="uploadChips" hidden></div>
@@ -857,15 +899,17 @@
       </div>
     </div>
     <aside class="model-rail" id="modelRail" aria-label="模型" data-i18n-aria="model">
-      <div class="rail-head" data-i18n="model">模型</div>
-      <div class="provider-tabs" id="providerTabs">
-        <button type="button" data-provider="ccapi">中转站</button>
-        <button type="button" data-provider="xai">xAI</button>
-        <button type="button" data-provider="openai">OpenAI</button>
-        <button type="button" data-provider="anthropic">Anthropic</button>
+      <div class="rail-head">
+        <span data-i18n="model">模型</span>
+        <button type="button" class="rail-refresh" id="refreshCatalog" data-i18n="rail.refresh">刷新</button>
       </div>
-      <div class="rail-base" id="railBaseUrl"></div>
-      <div class="rail-status"><span class="key-dot" id="railKeyDot"></span><span id="railKeyStatus">未保存密钥</span></div>
+      <div class="provider-tabs" id="providerTabs">
+        <button type="button" data-family="gpt">GPT</button>
+        <button type="button" data-family="claude">Claude</button>
+        <button type="button" data-family="grok">Grok</button>
+      </div>
+      <div class="rail-base" id="railBaseUrl" hidden></div>
+      <div class="rail-status" id="railStatus"><span id="railKeyStatus"></span></div>
       <div class="model-list" id="modelList"></div>
       <div class="rail-custom">
         <label data-i18n="rail.customLabel">自定义模型 ID</label>
@@ -892,12 +936,12 @@
         </div>
       </div>
       <div class="field">
-        <label data-i18n="settings.ccapiKey">中转站密钥</label>
+        <label data-i18n="settings.ccapiKey">管理员/中转站密钥</label>
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
           <span class="key-dot" id="keyDotCcapi"></span><span id="keyStatusCcapi">未保存密钥</span>
         </div>
         <input type="password" id="keyInputCcapi" placeholder="已保存则留空不修改" data-i18n-placeholder="settings.keyPlaceholder" autocomplete="off" />
-        <div class="hint" data-i18n="settings.ccapiHint">OpenAI 兼容中转。到 https://ccapi.us/pricing/ 或控制台申请 token。环境变量 CCAPI_API_KEY 也可作为回退。界面永不回显。</div>
+        <div class="hint" data-i18n="settings.ccapiHint">后台中转站 token。环境变量 CCAPI_API_KEY 也可作为回退。界面永不回显。普通用户只在右侧选 GPT / Claude / Grok。</div>
       </div>
       <div class="field">
         <label data-i18n="settings.ccapiBase">中转站地址</label>
@@ -908,6 +952,9 @@
         </div>
         <div class="hint" data-i18n="settings.ccapiBaseHint">默认 https://api.ccapi.ai/v1。也可填 https://api.ccapi.us/v1 或其它兼容基址。</div>
       </div>
+      <details class="advanced-direct" id="advancedDirect">
+        <summary data-i18n="settings.advanced">高级 / 直连</summary>
+        <p class="hint" data-i18n="settings.advancedHint">仅管理员调试用。默认对话走中转站，不会把这三家官方密钥暴露给普通用户。</p>
       <div class="field">
         <label data-i18n="settings.xaiKey">xAI API Key</label>
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
@@ -932,6 +979,7 @@
         <input type="password" id="keyInputAnthropic" placeholder="已保存则留空不修改" data-i18n-placeholder="settings.keyPlaceholder" autocomplete="off" />
         <div class="hint" data-i18n="settings.anthropicHint">环境变量 ANTHROPIC_API_KEY 也可作为回退。到 https://console.anthropic.com 申请。</div>
       </div>
+      </details>
       <div class="field">
         <label data-i18n="settings.model">当前对话模型</label>
         <input type="text" id="modelInput" placeholder="grok-4.6" />
@@ -1098,8 +1146,9 @@
     const backdrop = document.getElementById("backdrop");
     let busy = false;
     let sessionId = null;
-    let catalog = { providers: [], provider: "ccapi", model: "gpt-5.6", has_api_key: {} };
-    const PROVIDER_LABEL = { ccapi: "中转站", xai: "xAI", openai: "OpenAI", anthropic: "Anthropic" };
+    let catalog = { families: { gpt: [], claude: [], grok: [] }, family: "gpt", provider: "ccapi", model: "gpt-5.6", has_relay_key: false, source: "fallback" };
+    let activeFamily = "gpt";
+    const FAMILY_IDS = ["gpt", "claude", "grok"];
 
     function demos() {
       return [
@@ -1517,11 +1566,56 @@
       return { ccapi: !!raw, xai: false, openai: false, anthropic: false };
     }
     function currentProvider(data) {
-      return (data && data.provider) || catalog.provider || "ccapi";
+      const raw = (data && data.provider) || catalog.provider || "ccapi";
+      if (raw === "xai" || raw === "openai" || raw === "anthropic") return raw;
+      return "ccapi";
     }
     function currentHasKey(data) {
+      if (data && typeof data.has_relay_key === "boolean") return data.has_relay_key;
+      if (typeof catalog.has_relay_key === "boolean") return catalog.has_relay_key;
       const keys = keysFrom(data);
-      return !!keys[currentProvider(data)];
+      return !!keys.ccapi;
+    }
+    function familyOfId(id) {
+      const raw = String(id || "").toLowerCase();
+      const leaf = raw.split("/").pop() || raw;
+      if (raw.indexOf("claude") >= 0) return "claude";
+      if (raw.indexOf("grok") >= 0) return "grok";
+      if (raw.indexOf("gpt") >= 0 || raw.indexOf("chatgpt") >= 0) return "gpt";
+      if (leaf.indexOf("o1") === 0 || leaf.indexOf("o3") === 0 || leaf.indexOf("o4") === 0) return "gpt";
+      return "";
+    }
+    function prettyLabel(id) {
+      const leaf = String(id || "").split("/").pop() || String(id || "");
+      const low = leaf.toLowerCase();
+      const brands = [["chatgpt","ChatGPT"],["gpt","GPT"],["claude","Claude"],["grok","Grok"]];
+      for (let i = 0; i < brands.length; i++) {
+        if (low === brands[i][0]) return brands[i][1];
+        if (low.indexOf(brands[i][0]) === 0) return brands[i][1] + leaf.slice(brands[i][0].length);
+      }
+      return leaf;
+    }
+    function familiesFrom(data) {
+      const raw = (data && data.families) || catalog.families || {};
+      const out = { gpt: [], claude: [], grok: [] };
+      FAMILY_IDS.forEach(function (fid) {
+        const rows = raw[fid] || [];
+        out[fid] = rows.map(function (row) {
+          if (typeof row === "string") return { id: row, label: prettyLabel(row) };
+          return { id: row.id || "", label: row.label || prettyLabel(row.id || "") };
+        }).filter(function (row) { return row.id; });
+      });
+      return out;
+    }
+    function labelFor(id, families) {
+      const fams = families || catalog.families || {};
+      let found = "";
+      FAMILY_IDS.forEach(function (fid) {
+        (fams[fid] || []).forEach(function (row) {
+          if (row.id === id) found = row.label;
+        });
+      });
+      return found || prettyLabel(id);
     }
     function syncKeyDot(data) {
       const keys = keysFrom(data);
@@ -1545,47 +1639,59 @@
       const keys = keysFrom(data);
       const provider = currentProvider(data);
       const model = (data && data.model) || catalog.model || "gpt-5.6";
-      catalog = Object.assign({}, catalog, data || {}, { has_api_key: keys, provider, model });
+      const families = familiesFrom(data);
+      const family = (data && data.family) || familyOfId(model) || activeFamily || "gpt";
+      const hasRelay = currentHasKey(data);
+      if (data && data.families) activeFamily = family;
+      else if (FAMILY_IDS.indexOf(activeFamily) < 0) activeFamily = family;
+      catalog = Object.assign({}, catalog, data || {}, {
+        has_api_key: keys,
+        has_relay_key: hasRelay,
+        provider: provider,
+        model: model,
+        family: family,
+        families: families,
+      });
       document.querySelectorAll("#providerTabs button").forEach(btn => {
-        btn.classList.toggle("active", btn.dataset.provider === provider);
+        btn.classList.toggle("active", btn.dataset.family === activeFamily);
       });
       const baseEl = document.getElementById("railBaseUrl");
       if (baseEl) {
-        const meta = (catalog.providers || []).find(p => p.id === provider) || {};
-        const base = (provider === "ccapi")
-          ? (catalog.ccapi_base_url || meta.base_url || "https://api.ccapi.ai/v1")
-          : (meta.base_url || "");
-        baseEl.textContent = base ? ((t("rail.baseUrl") || "基址") + " · " + base) : "";
-        baseEl.style.display = base ? "block" : "none";
+        baseEl.textContent = "";
+        baseEl.hidden = true;
+        baseEl.style.display = "none";
       }
-      const has = !!keys[provider];
-      const dot = document.getElementById("railKeyDot");
+      const official = provider === "xai" || provider === "openai" || provider === "anthropic";
+      const hasOfficial = official ? !!keys[provider] : hasRelay;
       const st = document.getElementById("railKeyStatus");
-      if (dot) dot.classList.toggle("on", has);
-      if (st) st.textContent = has ? t("rail.keySaved") : t("rail.keyMissing");
+      if (st) {
+        if (!hasRelay && !official) st.textContent = t("rail.noRelayKey");
+        else if (official && !hasOfficial) st.textContent = t("rail.noRelayKey");
+        else st.textContent = "";
+      }
       const box = document.getElementById("modelList");
-      const meta = (catalog.providers || []).find(p => p.id === provider) || { models: [] };
-      const models = meta.models || [];
+      const models = families[activeFamily] || [];
       if (box) {
-        box.innerHTML = models.map(id => {
-          const active = id === model ? " active" : "";
-          return '<button type="button" class="model-row' + active + '" data-model="' + escapeHtml(id) + '">' + escapeHtml(id) + "</button>";
+        box.innerHTML = models.map(row => {
+          const active = row.id === model ? " active" : "";
+          return '<button type="button" class="model-row' + active + '" data-model="' + escapeHtml(row.id) + '">' + escapeHtml(row.label || prettyLabel(row.id)) + "</button>";
         }).join("");
         box.querySelectorAll(".model-row").forEach(btn => {
-          btn.addEventListener("click", () => selectModel(provider, btn.dataset.model));
+          btn.addEventListener("click", () => selectModel(activeFamily, btn.dataset.model));
         });
       }
       const custom = document.getElementById("customModel");
-      if (custom && models.indexOf(model) < 0) custom.value = model;
+      const ids = models.map(function (row) { return row.id; });
+      if (custom && ids.indexOf(model) < 0 && familyOfId(model) === activeFamily) custom.value = model;
       else if (custom && document.activeElement !== custom) custom.value = "";
-      if (modelPill) modelPill.textContent = model;
+      if (modelPill) modelPill.textContent = (data && data.model_label) || labelFor(model, families);
       const warn = document.getElementById("keyWarn");
       if (warn) {
-        warn.style.display = has ? "none" : "block";
-        const label = PROVIDER_LABEL[provider] || provider;
-        warn.textContent = has ? "" : t("keyWarnNamed", { provider: label });
+        const show = !hasRelay && !official;
+        warn.style.display = show ? "block" : "none";
+        warn.textContent = show ? t("rail.noRelayKey") : "";
       }
-      syncKeyDot({ has_api_key: keys });
+      syncKeyDot(Object.assign({}, data || {}, { has_api_key: keys }));
     }
     async function loadCatalog() {
       const res = await fetch("/api/models");
@@ -1594,8 +1700,8 @@
       syncRail(data);
       return data;
     }
-    async function selectModel(provider, model) {
-      const body = { provider, model, session_id: sessionId };
+    async function selectModel(family, model) {
+      const body = { family: family || activeFamily || "gpt", model, session_id: sessionId };
       const res = await fetch("/api/model", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -1603,6 +1709,7 @@
       });
       const data = await res.json();
       catalog = Object.assign({}, catalog, data);
+      if (data.family) activeFamily = data.family;
       syncRail(data);
       const mi = document.getElementById("modelInput");
       if (mi) mi.value = data.model || model;
@@ -1822,19 +1929,31 @@
     });
 
     document.getElementById("providerTabs").addEventListener("click", (e) => {
-      const btn = e.target.closest("button[data-provider]");
+      const btn = e.target.closest("button[data-family]");
       if (!btn) return;
-      const provider = btn.dataset.provider;
-      const meta = (catalog.providers || []).find(p => p.id === provider);
-      const fallback = meta && meta.default_model ? meta.default_model : "";
-      const next = (meta && meta.models && meta.models[0]) || fallback;
-      selectModel(provider, next);
+      const family = btn.dataset.family;
+      activeFamily = family;
+      const rows = (catalog.families || {})[family] || [];
+      const currentFam = familyOfId(catalog.model);
+      if (currentFam === family) {
+        syncRail(catalog);
+        return;
+      }
+      const next = rows[0] && rows[0].id;
+      if (next) selectModel(family, next);
+      else syncRail(catalog);
     });
     document.getElementById("applyCustom").addEventListener("click", () => {
       const id = document.getElementById("customModel").value.trim();
       if (!id) return;
-      selectModel(catalog.provider || "ccapi", id);
+      selectModel(familyOfId(id) || activeFamily || "gpt", id);
     });
+    const refreshBtn = document.getElementById("refreshCatalog");
+    if (refreshBtn) {
+      refreshBtn.addEventListener("click", () => {
+        loadCatalog().catch(() => {});
+      });
+    }
     document.getElementById("customModel").addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();

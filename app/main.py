@@ -20,7 +20,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 from app.agent import run_turn  # noqa: E402
-from app.providers import missing_key_message, normalize_provider  # noqa: E402
+from app.providers import (  # noqa: E402
+    family_for_model,
+    first_model_of,
+    missing_key_message,
+    model_label,
+    normalize_family,
+    normalize_provider,
+)
 from app.approvals import store as approval_store  # noqa: E402
 from app.memory import ensure_data_dir  # noqa: E402
 from app.mcp_client import mcp_status  # noqa: E402
@@ -119,6 +126,7 @@ class LoginRequest(BaseModel):
 
 
 class ModelSelect(BaseModel):
+    family: str | None = None
     provider: str | None = None
     model: str | None = None
     session_id: str | None = None
@@ -141,8 +149,11 @@ def _status_payload(sess: Session | None = None) -> dict[str, Any]:
     model = (getattr(active, "model", None) or "").strip() or pub["model"]
     return {
         "has_api_key": pub["has_api_key"],
+        "has_relay_key": bool(pub.get("has_relay_key") or (pub.get("has_api_key") or {}).get("ccapi")),
         "provider": provider,
+        "family": family_for_model(model) or pub.get("family") or "gpt",
         "model": model,
+        "model_label": model_label(model),
         "image_model": pub["image_model"],
         "allow_local_browser": pub["allow_local_browser"],
         "language": pub.get("language") or "zh",
@@ -304,10 +315,26 @@ async def get_models() -> dict[str, Any]:
 @app.put("/api/model")
 async def put_model(req: ModelSelect) -> dict[str, Any]:
     updates: dict[str, Any] = {}
-    if req.provider is not None:
-        updates["provider"] = normalize_provider(req.provider)
-    if req.model is not None and str(req.model).strip():
-        updates["model"] = str(req.model).strip()
+    official = None
+    if req.provider is not None and str(req.provider).strip():
+        official = normalize_provider(req.provider)
+    family = None
+    if req.family is not None and str(req.family).strip():
+        family = normalize_family(req.family)
+    mid = str(req.model or "").strip()
+    # Surface picker: family + model always stores the CCAPI relay.
+    if family and official not in ("xai", "openai", "anthropic"):
+        updates["provider"] = "ccapi"
+        if mid:
+            updates["model"] = mid
+        else:
+            cat = models_catalog()
+            updates["model"] = first_model_of(cat.get("families") or {}, family)
+    else:
+        if official is not None:
+            updates["provider"] = official
+        if mid:
+            updates["model"] = mid
     if updates:
         save_settings(updates)
     sess = _resolve_session(req.session_id) if req.session_id else store.active()

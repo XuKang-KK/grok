@@ -14,14 +14,17 @@ from app.providers import (
     CCAPI_BASE_URL,
     DEFAULT_IMAGE_MODEL,
     DEFAULT_PROVIDER,
+    FALLBACK_MODEL_IDS,
     PROVIDER_IDS,
     PROVIDERS,
-    catalog_payload,
-    default_model_for,
+    family_catalog_payload,
+    family_for_model,
     fetch_ccapi_models,
     merge_model_ids,
+    model_label,
     normalize_ccapi_base_url,
     normalize_provider,
+    default_model_for,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -184,10 +187,15 @@ def has_api_keys() -> dict[str, bool]:
 def public_settings() -> dict[str, Any]:
     """Safe view: never includes raw API keys."""
     provider = get_provider()
+    model = get_model(provider)
+    keys = has_api_keys()
     return {
-        "has_api_key": has_api_keys(),
+        "has_api_key": keys,
+        "has_relay_key": bool(keys.get("ccapi")),
         "provider": provider,
-        "model": get_model(provider),
+        "family": family_for_model(model) or "gpt",
+        "model": model,
+        "model_label": model_label(model),
         "image_model": get_image_model(),
         "allow_local_browser": allow_local_browser(),
         "language": get_language(),
@@ -207,28 +215,24 @@ def _skip_remote_model_fetch() -> bool:
 
 def models_catalog() -> dict[str, Any]:
     pub = public_settings()
-    payload = catalog_payload(
-        has_api_key=pub["has_api_key"],
+    has_relay = bool(get_api_key("ccapi"))
+    extra: list[str] = []
+    source = "fallback"
+    if not _skip_remote_model_fetch() and has_relay:
+        extra = fetch_ccapi_models(get_ccapi_base_url(), get_api_key("ccapi"), timeout=8.0)
+        if extra:
+            source = "live"
+    ids = list(FALLBACK_MODEL_IDS)
+    if extra:
+        ids = merge_model_ids(ids, extra)
+    return family_catalog_payload(
+        model_ids=ids,
+        source=source,
         provider=pub["provider"],
         model=pub["model"],
+        has_relay_key=has_relay,
+        family=pub.get("family"),
     )
-    base = get_ccapi_base_url()
-    payload["ccapi_base_url"] = base
-    payload["ccapi_base_presets"] = list(CCAPI_BASE_PRESETS)
-    extra: list[str] = []
-    if not _skip_remote_model_fetch() and get_api_key("ccapi"):
-        extra = fetch_ccapi_models(base, get_api_key("ccapi"), timeout=8.0)
-    for row in payload.get("providers") or []:
-        if not isinstance(row, dict):
-            continue
-        pid = row.get("id")
-        if pid == "ccapi":
-            row["base_url"] = base
-            row["base_presets"] = list(CCAPI_BASE_PRESETS)
-            row["models"] = merge_model_ids(list(row.get("models") or []), extra)
-        elif pid in PROVIDERS:
-            row["base_url"] = PROVIDERS[pid]["base_url"]
-    return payload
 
 
 def strip_secrets(payload: dict[str, Any]) -> dict[str, Any]:

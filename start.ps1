@@ -18,7 +18,7 @@ pip install -r requirements.txt
 
 if (-not (Test-Path -Path ".env")) {
     Copy-Item ".env.example" ".env"
-    Write-Host "已复制 .env.example 为 .env。请编辑 .env 或在网页设置中填入各提供商密钥。"
+    Write-Host "已复制 .env.example 为 .env。请编辑 .env 或在网页设置中填入中转站密钥（CCAPI_API_KEY）。"
 }
 
 function Import-DotEnv {

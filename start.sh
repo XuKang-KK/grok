@@ -17,7 +17,7 @@ pip install -r requirements.txt
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
-  echo "已复制 .env.example 为 .env。请编辑 .env 或在网页设置中填入各提供商密钥。"
+  echo "已复制 .env.example 为 .env。请编辑 .env 或在网页设置中填入中转站密钥（CCAPI_API_KEY）。"
 fi
 
 if [[ -f .env ]]; then
