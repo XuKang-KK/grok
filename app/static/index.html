@@ -528,7 +528,7 @@
       background: rgba(0,0,0,.45);
       z-index: 8;
     }
-    @media (max-width: 1100px) {
+    @media (max-width: 720px) {
       .model-rail {
         position: fixed;
         inset: 0 0 0 auto;
@@ -716,7 +716,8 @@
           </div>
         </div>
         <div class="header-actions">
-          <span class="model-pill" id="modelPill">grok-4.6</span>
+          <span class="model-pill" id="modelPill" title="选择模型">grok-4.6</span>
+          <button class="ghost" id="modelBtn" type="button">模型</button>
           <button class="ghost" id="routinesBtn" type="button">例程</button>
           <button class="ghost" id="settingsBtn" type="button">设置</button>
         </div>
@@ -1064,6 +1065,17 @@
       await loadSessions();
       renderThread(data.messages || []);
     }
+
+    function toggleModelRail() {
+      const rail = document.getElementById("modelRail");
+      if (!rail) return;
+      rail.classList.toggle("open");
+      if (rail.classList.contains("open")) backdrop.classList.add("show");
+    }
+    const modelBtn = document.getElementById("modelBtn");
+    if (modelBtn) modelBtn.addEventListener("click", toggleModelRail);
+    const modelPillEl = document.getElementById("modelPill");
+    if (modelPillEl) modelPillEl.addEventListener("click", toggleModelRail);
 
     function closeSidebar() {
       sidebar.classList.remove("open");
