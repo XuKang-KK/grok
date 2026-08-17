@@ -441,6 +441,10 @@ def mcp_status() -> dict[str, Any]:
 
 
 def mcp_tool_schemas() -> list[dict[str, Any]]:
+    from app.settings import is_public_mode
+
+    if is_public_mode():
+        return []
     try:
         return manager.tool_schemas()
     except Exception:

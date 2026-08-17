@@ -327,6 +327,24 @@ def classify_command(command: str) -> tuple[str, str]:
     return "ok", ""
 
 
+_SECRET_ENV_NAMES = frozenset(
+    {
+        "CCAPI_API_KEY",
+        "XAI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "KK_ACCESS_TOKEN",
+        "ACCESS_TOKEN",
+    }
+)
+
+
+def _subprocess_env() -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k not in _SECRET_ENV_NAMES}
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
 def run_command(command: str) -> str:
     command = (command or "").strip()
     if not command:
@@ -342,7 +360,7 @@ def run_command(command: str) -> str:
             capture_output=True,
             text=True,
             timeout=CMD_TIMEOUT_SEC,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env=_subprocess_env(),
         )
     except subprocess.TimeoutExpired:
         return json.dumps(
@@ -480,7 +498,7 @@ def _unique_upload_path(directory: Path, name: str) -> Path:
     return candidate
 
 
-def save_upload(filename: str, content: bytes) -> str:
+def save_upload(filename: str, content: bytes, owner: str = "") -> str:
     """Save an uploaded file into workspace/uploads/. Returns JSON."""
     if content is None:
         content = b""
@@ -510,11 +528,17 @@ def save_upload(filename: str, content: bytes) -> str:
 
     workspace = WORKSPACE.resolve()
     dest_dir = (workspace / UPLOADS_DIRNAME).resolve()
+    owner = (owner or "").strip()
+    if owner:
+        if not re.fullmatch(r"[0-9a-f]{32}", owner):
+            return json.dumps({"error": "非法访客标识"}, ensure_ascii=False)
+        dest_dir = (dest_dir / owner).resolve()
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         return json.dumps({"error": f"无法创建上传目录: {exc}"}, ensure_ascii=False)
-    if not dest_dir.is_relative_to(workspace):
+    uploads_root = (workspace / UPLOADS_DIRNAME).resolve()
+    if not dest_dir.is_relative_to(uploads_root) or not dest_dir.is_relative_to(workspace):
         return json.dumps(
             {"error": "路径越界：只能写入 workspace/uploads/"},
             ensure_ascii=False,
@@ -1137,8 +1161,20 @@ def _lazy_dispatch(name: str) -> Callable[..., str] | None:
     return None
 
 
-def get_tool_schemas(*, allow_delegate: bool = True) -> list[dict[str, Any]]:
+PUBLIC_TOOLS = frozenset({"web_search", "fetch_url", "generate_image"})
+
+
+def get_tool_schemas(*, allow_delegate: bool = True, public: bool | None = None) -> list[dict[str, Any]]:
     """All model-facing tools, including MCP (loaded from data/mcp.json)."""
+    from app.settings import is_public_mode
+
+    locked = is_public_mode() if public is None else bool(public)
+    if locked:
+        allowed: list[dict[str, Any]] = []
+        for schema in list(TOOLS) + list(_EXTRA_SCHEMAS):
+            if schema["function"]["name"] in PUBLIC_TOOLS:
+                allowed.append(schema)
+        return allowed
     tools = list(TOOLS)
     for schema in _EXTRA_SCHEMAS:
         fname = schema["function"]["name"]
@@ -1251,6 +1287,20 @@ def _media_from_result(name: str, raw: str) -> str | None:
 
 def execute_tool(name: str, arguments_json: str) -> tuple[str, dict[str, Any]]:
     """Run a tool. Returns (result_json, ui_event)."""
+    from app.settings import is_public_mode
+
+    if is_public_mode() and name not in PUBLIC_TOOLS:
+        err = json.dumps(
+            {"error": "对外模式已禁用该工具", "ok": False},
+            ensure_ascii=False,
+        )
+        return err, {
+            "name": name,
+            "label": tool_label(name),
+            "args_summary": (arguments_json or "")[:120],
+            "ok": False,
+            "summary": "对外模式已禁用该工具",
+        }
     try:
         args = json.loads(arguments_json or "{}")
         if not isinstance(args, dict):

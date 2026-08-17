@@ -33,6 +33,13 @@ HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8000}"
 TOKEN="${KK_ACCESS_TOKEN:-${ACCESS_TOKEN:-}}"
 
+PUBLIC="${KK_PUBLIC:-${PUBLIC_MODE:-}}"
+if [[ "${PUBLIC,,}" == "1" || "${PUBLIC,,}" == "true" || "${PUBLIC,,}" == "yes" || "${PUBLIC,,}" == "on" ]]; then
+  if [[ -z "$TOKEN" ]]; then
+    echo "警告：KK_PUBLIC 已开启，但未设置 KK_ACCESS_TOKEN。访客可以聊天，但无人能改密钥。请设置管理员口令，并在前面加 TLS。" >&2
+  fi
+fi
+
 if [[ "$HOST" == "0.0.0.0" || "$HOST" == "::" || "$HOST" == "[::]" ]]; then
   if [[ -z "$TOKEN" ]]; then
     echo "警告：HOST=${HOST} 将把服务暴露到局域网，但未设置 KK_ACCESS_TOKEN。任何能访问该端口的人都可以调用 API、读写 workspace。请在 .env 中设置 KK_ACCESS_TOKEN，或在网页设置里填写访问口令。" >&2

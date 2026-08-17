@@ -71,9 +71,25 @@ _sub_sema = threading.BoundedSemaphore(SUBAGENT_CONCURRENCY)
 _tls = threading.local()
 
 
+PUBLIC_SYSTEM_PROMPT = """你是面向公众用户的 KK AI助手。请用简体中文回答，除非用户使用其他语言。
+
+你只能使用以下工具：
+- web_search：搜索公开网页。
+- fetch_url：抓取指定公开 http(s) URL（不能访问 localhost / 内网 / file://）。
+- generate_image：根据文字生成图片。
+
+你不能访问服务器文件、不能执行命令、不能使用记忆或浏览器，也不要声称可以读写本地磁盘。
+需要外部信息时用 web_search / fetch_url。生成图片必须调用 generate_image。
+最终回复简洁、可读；需要时用 Markdown。引用搜索结果时带上链接。
+"""
+
+
 def build_system_prompt(*, subagent: bool = False) -> str:
     from app.memory import memory_summary
+    from app.settings import is_public_mode
 
+    if is_public_mode():
+        return PUBLIC_SYSTEM_PROMPT
     base = SUBAGENT_PROMPT if subagent else SYSTEM_PROMPT
     extra = memory_summary(20)
     if not extra:
@@ -217,6 +233,9 @@ def run_one_tool(
     auto_deny_approvals: bool = False,
 ) -> Iterator[dict[str, Any]]:
     """Execute one tool call. Yields UI events; last `_tool_result` has the payload."""
+    from app.settings import is_public_mode
+    from app.tools import PUBLIC_TOOLS
+
     yield {
         "type": "tool_start",
         "name": name,
@@ -224,6 +243,23 @@ def run_one_tool(
         "args_summary": summarize_args(name, args_obj),
         "source": source or "main",
     }
+
+    if is_public_mode() and name not in PUBLIC_TOOLS:
+        result = json.dumps(
+            {"error": "对外模式已禁用该工具", "ok": False},
+            ensure_ascii=False,
+        )
+        yield {
+            "type": "tool_end",
+            "name": name,
+            "label": _label(name, source),
+            "args_summary": summarize_args(name, args_obj),
+            "ok": False,
+            "summary": "对外模式已禁用该工具",
+            "source": source or "main",
+        }
+        yield {"type": "_tool_result", "result": result}
+        return
 
     if name == "delegate_task":
         if not allow_delegate or getattr(_tls, "in_subagent", False):

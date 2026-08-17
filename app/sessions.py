@@ -47,6 +47,7 @@ class Session:
         self.pending_images: list[dict[str, Any]] = list(data.get("pending_images") or [])
         self.provider: str = str(data.get("provider") or "")
         self.model: str = str(data.get("model") or "")
+        self.owner: str = str(data.get("owner") or "")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +60,7 @@ class Session:
             "pending_images": self.pending_images,
             "provider": self.provider,
             "model": self.model,
+            "owner": self.owner,
         }
 
     def meta(self) -> dict[str, Any]:
@@ -170,7 +172,7 @@ class SessionStore:
             encoding="utf-8",
         )
 
-    def get(self, sid: str) -> Session | None:
+    def get(self, sid: str, owner: str | None = None) -> Session | None:
         if not _safe_id(sid):
             return None
         path = self._path(sid)
@@ -182,20 +184,31 @@ class SessionStore:
             return None
         if not isinstance(data, dict) or data.get("id") != sid:
             return None
-        return Session(data)
+        sess = Session(data)
+        if owner is not None:
+            if not sess.owner or sess.owner != owner:
+                return None
+        return sess
 
-    def list(self) -> list[dict[str, Any]]:
+    def list(self, owner: str | None = None) -> list[dict[str, Any]]:
         ensure_dirs()
         items: list[dict[str, Any]] = []
         for path in SESSIONS_DIR.glob("*.json"):
             sid = path.stem
-            sess = self.get(sid)
-            if sess:
-                items.append(sess.meta())
+            # Read without owner filter first so we can apply it explicitly.
+            if not _safe_id(sid):
+                continue
+            raw = self.get(sid)
+            if raw is None:
+                continue
+            if owner is not None:
+                if not raw.owner or raw.owner != owner:
+                    continue
+            items.append(raw.meta())
         items.sort(key=lambda m: m.get("updated_at") or "", reverse=True)
         return items
 
-    def create(self, title: str = "新对话") -> Session:
+    def create(self, title: str = "新对话", owner: str = "") -> Session:
         ensure_dirs()
         sid = uuid.uuid4().hex
         from app.settings import get_model, get_provider
@@ -211,20 +224,29 @@ class SessionStore:
                 "ui_turns": [],
                 "provider": provider,
                 "model": get_model(provider),
+                "owner": owner or "",
             }
         )
         self.save(sess)
         return sess
 
-    def select(self, sid: str) -> Session | None:
-        sess = self.get(sid)
+    def select(self, sid: str, owner: str | None = None) -> Session | None:
+        sess = self.get(sid, owner=owner)
         if sess is None:
             return None
-        self._active_id = sid
-        self._write_active(sid)
+        if owner is None:
+            self._active_id = sid
+            self._write_active(sid)
         return sess
 
-    def active(self) -> Session:
+    def active(self, owner: str | None = None) -> Session:
+        if owner is not None:
+            items = self.list(owner=owner)
+            if items:
+                sess = self.get(items[0]["id"], owner=owner)
+                if sess is not None:
+                    return sess
+            return self.create(owner=owner)
         sess = self.get(self._active_id) if self._active_id else None
         if sess is not None:
             return sess
@@ -232,8 +254,9 @@ class SessionStore:
         self.select(created.id)
         return created
 
-    def delete(self, sid: str) -> bool:
-        if not _safe_id(sid):
+    def delete(self, sid: str, owner: str | None = None) -> bool:
+        sess = self.get(sid, owner=owner)
+        if sess is None:
             return False
         path = self._path(sid)
         if not path.exists():
@@ -242,7 +265,7 @@ class SessionStore:
             path.unlink()
         except OSError:
             return False
-        if self._active_id == sid:
+        if owner is None and self._active_id == sid:
             remaining = self.list()
             if remaining:
                 self.select(remaining[0]["id"])

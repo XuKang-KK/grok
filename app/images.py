@@ -6,13 +6,15 @@ import base64
 import json
 import re
 import time
+import uuid
 from pathlib import Path
+from urllib.parse import urljoin
 
 import httpx
 from openai import OpenAI
 
-from app.settings import get_api_key, get_ccapi_base_url, get_image_model, get_provider
-from app.tools import WORKSPACE
+from app.settings import get_api_key, get_ccapi_base_url, get_image_model, get_provider, is_public_mode
+from app.tools import WORKSPACE, validate_public_http_url
 
 GENERATED_DIRNAME = "generated"
 MAX_PROMPT = 2000
@@ -43,10 +45,7 @@ def _generate_with_client(client: OpenAI, model: str, prompt: str) -> tuple[byte
             url = getattr(resp.data[0], "url", None)
             if not url:
                 raise RuntimeError("图像接口未返回 url 或 b64_json")
-            with httpx.Client(timeout=60.0, follow_redirects=True) as http:
-                r = http.get(url)
-                r.raise_for_status()
-                raw = r.content
+            raw = _download_public_image(url)
         except Exception as exc2:  # noqa: BLE001
             last_err = f"{last_err}; fallback: {type(exc2).__name__}: {exc2}"
     return raw, last_err
@@ -56,6 +55,26 @@ def _xai_client() -> OpenAI:
     from app.agent import make_xai_client
 
     return make_xai_client()
+
+
+def _download_public_image(url: str) -> bytes:
+    """GET a remote image URL after SSRF checks. Never follow unchecked redirects."""
+    current = (url or "").strip()
+    with httpx.Client(timeout=60.0, follow_redirects=False) as http:
+        for _hop in range(5):
+            err = validate_public_http_url(current)
+            if err:
+                raise RuntimeError(err)
+            r = http.get(current)
+            if r.status_code in (301, 302, 303, 307, 308):
+                loc = r.headers.get("location")
+                if not loc:
+                    raise RuntimeError("重定向缺少 Location")
+                current = urljoin(current, loc)
+                continue
+            r.raise_for_status()
+            return r.content
+    raise RuntimeError("重定向过多")
 
 
 def generate_image(prompt: str) -> str:
@@ -117,10 +136,24 @@ def generate_image(prompt: str) -> str:
         )
 
     dest_dir = (WORKSPACE / GENERATED_DIRNAME).resolve()
+    url_name = None
+    if is_public_mode():
+        from app.publicmode import current_visitor
+
+        vid = current_visitor()
+        name = f"{uuid.uuid4().hex}.png"
+        if vid:
+            dest_dir = (dest_dir / vid).resolve()
+            url_name = f"{vid}/{name}"
+        else:
+            url_name = name
+    else:
+        name = f"img_{time.strftime('%Y%m%d_%H%M%S')}_{_slug(prompt)}.png"
+        url_name = name
     dest_dir.mkdir(parents=True, exist_ok=True)
-    if not dest_dir.is_relative_to(WORKSPACE.resolve()):
+    generated_root = (WORKSPACE / GENERATED_DIRNAME).resolve()
+    if not dest_dir.is_relative_to(generated_root) or not dest_dir.is_relative_to(WORKSPACE.resolve()):
         return json.dumps({"error": "路径越界"}, ensure_ascii=False)
-    name = f"img_{time.strftime('%Y%m%d_%H%M%S')}_{_slug(prompt)}.png"
     target = (dest_dir / name).resolve()
     if not target.is_relative_to(dest_dir):
         return json.dumps({"error": "路径越界"}, ensure_ascii=False)
@@ -128,12 +161,12 @@ def generate_image(prompt: str) -> str:
         target.write_bytes(raw)
     except OSError as exc:
         return json.dumps({"error": f"保存失败: {exc}"}, ensure_ascii=False)
-    rel = f"{GENERATED_DIRNAME}/{name}"
+    rel = target.relative_to(WORKSPACE.resolve()).as_posix()
     return json.dumps(
         {
             "ok": True,
             "path": rel,
-            "url": f"/api/media/{GENERATED_DIRNAME}/{name}",
+            "url": f"/api/media/{GENERATED_DIRNAME}/{url_name}",
             "bytes": len(raw),
             "model": model,
             "prompt": prompt,

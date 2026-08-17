@@ -40,6 +40,12 @@ _SECRET_KEYS = frozenset(
 _STR_KEYS = frozenset({"provider", "model", "grok_model", "image_model", "language", "ccapi_base_url"})
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _ensure_data_dir() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -85,6 +91,8 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
             current[key] = str(value).strip()
         elif key == "allow_local_browser":
             current[key] = bool(value)
+        elif key == "public_mode":
+            current[key] = _truthy(value)
         else:
             current[key] = value
     if "model" in updates and updates.get("model") not in (None, ""):
@@ -168,7 +176,21 @@ def get_language() -> str:
     return "en" if raw == "en" else "zh"
 
 
+def is_public_mode() -> bool:
+    """KK_PUBLIC / PUBLIC_MODE / settings.public_mode. Settings override env if present."""
+    data = load_settings()
+    if "public_mode" in data:
+        return _truthy(data.get("public_mode"))
+    for name in ("KK_PUBLIC", "PUBLIC_MODE"):
+        raw = os.getenv(name)
+        if raw is not None and str(raw).strip() != "":
+            return _truthy(raw)
+    return False
+
+
 def allow_local_browser() -> bool:
+    if is_public_mode():
+        return False
     data = load_settings()
     if "allow_local_browser" in data:
         return bool(data.get("allow_local_browser"))
@@ -184,12 +206,12 @@ def has_api_keys() -> dict[str, bool]:
     return {pid: bool(get_api_key(pid)) for pid in PROVIDER_IDS}
 
 
-def public_settings() -> dict[str, Any]:
+def public_settings(*, is_admin: bool = False) -> dict[str, Any]:
     """Safe view: never includes raw API keys."""
     provider = get_provider()
     model = get_model(provider)
     keys = has_api_keys()
-    return {
+    payload: dict[str, Any] = {
         "has_api_key": keys,
         "has_relay_key": bool(keys.get("ccapi")),
         "provider": provider,
@@ -203,7 +225,15 @@ def public_settings() -> dict[str, Any]:
         "auth_required": bool(get_access_token()),
         "ccapi_base_url": get_ccapi_base_url(),
         "ccapi_base_presets": list(CCAPI_BASE_PRESETS),
+        "public_mode": is_public_mode(),
+        "is_admin": bool(is_admin),
     }
+    if is_public_mode() and not is_admin:
+        payload.pop("ccapi_base_url", None)
+        payload.pop("ccapi_base_presets", None)
+        payload["allow_local_browser"] = False
+        payload["is_admin"] = False
+    return payload
 
 
 def _skip_remote_model_fetch() -> bool:
@@ -290,6 +320,15 @@ def get_access_token() -> str:
 def get_cors_origins() -> list[str]:
     load_dotenv(ENV_FILE, override=False)
     raw = (os.getenv("KK_CORS_ORIGINS") or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def get_allowed_hosts() -> list[str]:
+    """Optional Host allow-list. Empty = no extra check."""
+    load_dotenv(ENV_FILE, override=False)
+    raw = (os.getenv("KK_ALLOWED_HOSTS") or "").strip()
     if not raw:
         return []
     return [part.strip() for part in raw.split(",") if part.strip()]

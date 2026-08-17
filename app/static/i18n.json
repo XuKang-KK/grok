@@ -125,7 +125,12 @@
     "family.claude": "Claude",
     "family.grok": "Grok",
     "settings.advanced": "高级直连",
-    "settings.advancedHint": "仅调试用。默认对话走中转站；这三家官方密钥不是对外主路径。"
+    "settings.advancedHint": "仅调试用。默认对话走中转站；这三家官方密钥不是对外主路径。",
+    "public.banner": "对外模式已开启（仅聊天与网页工具）",
+    "public.tagline": "聊天 · 网页 · 生图",
+    "settings.adminOnly": "管理员登录后可改密钥",
+    "auth.adminLogin": "管理员登录",
+    "composer.hintPublic": "对外模式：可聊天、搜索网页、抓取链接、生成图片。无法访问服务器文件或命令。"
   },
   "en": {
     "app.name": "KK AI助手",
@@ -253,6 +258,11 @@
     "family.claude": "Claude",
     "family.grok": "Grok",
     "settings.advanced": "Advanced direct",
-    "settings.advancedHint": "Debugging only. Normal chat uses the relay; these official keys are not the public path."
+    "settings.advancedHint": "Debugging only. Normal chat uses the relay; these official keys are not the public path.",
+    "public.banner": "Public mode is on (chat and web tools only)",
+    "public.tagline": "Chat · Web · Images",
+    "settings.adminOnly": "Sign in as admin to change API keys",
+    "auth.adminLogin": "Admin sign-in",
+    "composer.hintPublic": "Public mode: chat, search the web, fetch pages, and generate images. No server files or commands."
   }
 }

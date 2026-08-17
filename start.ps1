@@ -51,6 +51,13 @@ $BindHost = if ($env:HOST) { $env:HOST } else { "127.0.0.1" }
 $BindPort = if ($env:PORT) { $env:PORT } else { "8000" }
 $Token = if ($env:KK_ACCESS_TOKEN) { $env:KK_ACCESS_TOKEN } elseif ($env:ACCESS_TOKEN) { $env:ACCESS_TOKEN } else { "" }
 
+$Public = if ($env:KK_PUBLIC) { $env:KK_PUBLIC } elseif ($env:PUBLIC_MODE) { $env:PUBLIC_MODE } else { "" }
+if ($Public -and @("1","true","yes","on") -contains $Public.ToLower()) {
+    if (-not $Token) {
+        Write-Host "警告：KK_PUBLIC 已开启，但未设置 KK_ACCESS_TOKEN。访客可以聊天，但无人能改密钥。请设置管理员口令，并在前面加 TLS。"
+    }
+}
+
 if ($BindHost -eq "0.0.0.0" -or $BindHost -eq "::" -or $BindHost -eq "[::]") {
     if (-not $Token) {
         Write-Host "警告：HOST=$BindHost 将把服务暴露到局域网，但未设置 KK_ACCESS_TOKEN。任何能访问该端口的人都可以调用 API、读写 workspace。请在 .env 中设置 KK_ACCESS_TOKEN，或在网页设置里填写访问口令。"

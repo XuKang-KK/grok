@@ -1,6 +1,6 @@
-# KK AI助手（本地 v1.4.0）
+# KK AI助手（本地 v1.5.0）
 
-一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.4.0 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
+一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.5.0 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
 
 **对外 = 右侧 GPT / Claude / Grok，后台中转站，不展示价格。** 对话一律走 CCAPI；右侧不出现 xAI / OpenAI / Anthropic / 中转站页签，也不显示基址或价格。
 
@@ -216,6 +216,27 @@ grok-assistant/
   data/                # gitignore
 ```
 
+
+## 对外安全（KK_PUBLIC）
+
+把本机助手开到公网时，设 `KK_PUBLIC=1`（或 `PUBLIC_MODE=1`，或在 `data/settings.json` 写 `"public_mode": true`）。本地开发默认不要开。
+
+- 访客可以聊天、选模型、管理**自己的**会话；不能列出别人的对话，也不能改密钥。
+- 工具只剩 `web_search` / `fetch_url` / `generate_image`。shell、文件、记忆、浏览器、MCP、例程调度都关掉。
+- 必须另设 `KK_ACCESS_TOKEN` 作为管理员口令，才能改密钥 / MCP / 例程。没有口令时这些接口返回 403。
+- 前面加 TLS（Caddy / nginx）。登录 cookie 在 HTTPS 或 `X-Forwarded-Proto: https` 时带 `Secure`。
+- 聊天 20 次 / 10 分钟 / IP，上传与登录各 10 次。可用 `KK_ALLOWED_HOSTS` 限制 Host。
+- `/docs` 在对外模式关闭。健康检查不返回 workspace 路径。
+
+```bash
+# .env
+KK_PUBLIC=1
+KK_ACCESS_TOKEN=请换成足够长的随机口令
+HOST=0.0.0.0
+# 建议前面用反代并只暴露 443
+```
+
+本模式**不是**完整多租户隔离：CCAPI 花销记在你的账号上；没有 TLS 时口令会明文走网；防火墙与密钥轮换仍要你自己做。
 
 ## 上线前你必须自己做的
 

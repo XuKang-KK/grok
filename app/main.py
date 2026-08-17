@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -44,8 +44,17 @@ from app.auth import (  # noqa: E402
     COOKIE_NAME,
     AccessTokenMiddleware,
     SameOriginCORSMiddleware,
+    is_admin,
+    token_cookie_digest,
     tokens_match,
     warn_if_lan_unprotected,
+)
+from app.publicmode import (  # noqa: E402
+    PublicHardeningMiddleware,
+    cookie_should_be_secure,
+    get_visitor_id,
+    session_owner,
+    settings_body_requires_admin,
 )
 from app.browser import chromium_available  # noqa: E402
 from app.settings import (  # noqa: E402
@@ -58,6 +67,7 @@ from app.settings import (  # noqa: E402
     get_provider,
     has_any_provider_key,
     models_catalog,
+    is_public_mode,
     public_settings,
     save_settings,
     strip_secrets,
@@ -75,7 +85,8 @@ store = SessionStore()
 async def lifespan(_app: FastAPI):
     if "pytest" not in sys.modules:
         warn_if_lan_unprotected()
-        start_scheduler()
+        if not is_public_mode():
+            start_scheduler()
     yield
     stop_scheduler()
     try:
@@ -92,9 +103,18 @@ async def lifespan(_app: FastAPI):
         pass
 
 
-app = FastAPI(title="KK AI助手", version=__version__, lifespan=lifespan)
+_public_at_boot = is_public_mode()
+app = FastAPI(
+    title="KK AI助手",
+    version=__version__,
+    lifespan=lifespan,
+    docs_url=None if _public_at_boot else "/docs",
+    redoc_url=None if _public_at_boot else "/redoc",
+    openapi_url=None if _public_at_boot else "/openapi.json",
+)
 app.add_middleware(AccessTokenMiddleware)
 app.add_middleware(SameOriginCORSMiddleware)
+app.add_middleware(PublicHardeningMiddleware)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -142,12 +162,17 @@ class RoutineCreate(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=4000)
 
 
-def _status_payload(sess: Session | None = None) -> dict[str, Any]:
-    active = sess or store.active()
-    pub = public_settings()
+def _status_payload(
+    sess: Session | None = None,
+    request: Request | None = None,
+) -> dict[str, Any]:
+    owner = session_owner(request) if request is not None else None
+    active = sess or store.active(owner=owner)
+    admin = is_admin(request) if request is not None else False
+    pub = public_settings(is_admin=admin)
     provider = (getattr(active, "provider", None) or "").strip() or pub["provider"]
     model = (getattr(active, "model", None) or "").strip() or pub["model"]
-    return {
+    payload: dict[str, Any] = {
         "has_api_key": pub["has_api_key"],
         "has_relay_key": bool(pub.get("has_relay_key") or (pub.get("has_api_key") or {}).get("ccapi")),
         "provider": provider,
@@ -157,27 +182,34 @@ def _status_payload(sess: Session | None = None) -> dict[str, Any]:
         "image_model": pub["image_model"],
         "allow_local_browser": pub["allow_local_browser"],
         "language": pub.get("language") or "zh",
-        "workspace": str((PROJECT_ROOT / "workspace").resolve()),
         "session_id": active.id,
         "version": __version__,
+        "public_mode": is_public_mode(),
+        "is_admin": admin,
     }
+    if not is_public_mode() or admin:
+        payload["workspace"] = str((PROJECT_ROOT / "workspace").resolve())
+    if "ccapi_base_url" in pub:
+        payload["ccapi_base_url"] = pub["ccapi_base_url"]
+    return payload
 
 
-def _resolve_session(session_id: str | None) -> Session:
+def _resolve_session(session_id: str | None, request: Request | None = None) -> Session:
+    owner = session_owner(request) if request is not None else None
     if session_id:
-        sess = store.get(session_id)
+        sess = store.get(session_id, owner=owner)
         if sess is None:
             raise HTTPException(status_code=404, detail="会话不存在")
         return sess
-    return store.active()
+    return store.active(owner=owner)
 
 
-def _session_view(sess: Session) -> dict[str, Any]:
+def _session_view(sess: Session, request: Request | None = None) -> dict[str, Any]:
     return {
         "ok": True,
         "session": sess.meta(),
         "messages": list(sess.ui_turns),
-        **_status_payload(sess),
+        **_status_payload(sess, request),
         "session_id": sess.id,
     }
 
@@ -225,14 +257,24 @@ def _ready_payload() -> dict[str, Any]:
         issues.append("missing_chromium")
     if host in {"127.0.0.1", "localhost", "::1"}:
         issues.append("listening_only_on_localhost")
-    if host in {"0.0.0.0", "::", "[::]"} and not get_access_token():
+    if is_public_mode() and not get_access_token():
+        issues.append("auth_missing_on_public")
+    elif host in {"0.0.0.0", "::", "[::]"} and not get_access_token():
         issues.append("auth_missing_on_lan")
     return {"ok": not issues, "issues": issues}
 
 
 @app.get("/api/health")
-async def health() -> dict[str, Any]:
-    return {"ok": True, **_status_payload(), **_runtime_payload()}
+async def health(request: Request) -> dict[str, Any]:
+    if is_public_mode():
+        return {
+            "ok": True,
+            "version": __version__,
+            "public_mode": True,
+            "auth_required": bool(get_access_token()),
+            "has_any_provider_key": has_any_provider_key(),
+        }
+    return {"ok": True, **_status_payload(request=request), **_runtime_payload()}
 
 
 @app.get("/api/ready")
@@ -241,7 +283,7 @@ async def ready() -> dict[str, Any]:
 
 
 @app.post("/api/login")
-async def login(req: LoginRequest, response: Response) -> dict[str, Any]:
+async def login(req: LoginRequest, request: Request, response: Response) -> dict[str, Any]:
     expected = get_access_token()
     if not expected:
         response.delete_cookie(COOKIE_NAME, path="/")
@@ -251,10 +293,10 @@ async def login(req: LoginRequest, response: Response) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="口令不正确")
     response.set_cookie(
         key=COOKIE_NAME,
-        value=provided,
+        value=token_cookie_digest(provided),
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=cookie_should_be_secure(request),
         path="/",
         max_age=60 * 60 * 24 * 30,
     )
@@ -262,13 +304,17 @@ async def login(req: LoginRequest, response: Response) -> dict[str, Any]:
 
 
 @app.get("/api/settings")
-async def get_settings() -> dict[str, Any]:
-    payload = {**public_settings(), "ok": True, "version": __version__}
+async def get_settings(request: Request) -> dict[str, Any]:
+    payload = {
+        **public_settings(is_admin=is_admin(request)),
+        "ok": True,
+        "version": __version__,
+    }
     return strip_secrets(payload)
 
 
 @app.put("/api/settings")
-async def put_settings(req: SettingsUpdate) -> dict[str, Any]:
+async def put_settings(req: SettingsUpdate, request: Request) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     if req.xai_api_key is not None:
         updates["xai_api_key"] = req.xai_api_key
@@ -296,13 +342,32 @@ async def put_settings(req: SettingsUpdate) -> dict[str, Any]:
         updates["access_token"] = req.access_token
     if req.clear_access_token:
         updates["clear_access_token"] = True
+    if is_public_mode() and settings_body_requires_admin(updates) and not is_admin(request):
+        raise HTTPException(status_code=403, detail="需要管理员口令")
+    owner = session_owner(request)
+    if is_public_mode() and not is_admin(request):
+        # Visitors may persist language; model changes stay on their session.
+        lang = updates.get("language")
+        session_model = updates.pop("model", None)
+        session_provider = updates.pop("provider", None)
+        updates.pop("grok_model", None)
+        updates.pop("image_model", None)
+        if lang is not None:
+            save_settings({"language": lang})
+        sess = store.active(owner=owner)
+        if session_provider:
+            sess.provider = session_provider
+        if session_model:
+            sess.model = session_model
+        store.save(sess)
+        return strip_secrets({**public_settings(is_admin=False), "ok": True})
     save_settings(updates)
     if "provider" in updates or "model" in updates or "grok_model" in updates:
-        sess = store.active()
+        sess = store.active(owner=owner)
         sess.provider = get_provider()
         sess.model = get_model(sess.provider)
         store.save(sess)
-    return strip_secrets({**public_settings(), "ok": True})
+    return strip_secrets({**public_settings(is_admin=is_admin(request)), "ok": True})
 
 
 @app.get("/api/models")
@@ -313,7 +378,7 @@ async def get_models() -> dict[str, Any]:
 
 
 @app.put("/api/model")
-async def put_model(req: ModelSelect) -> dict[str, Any]:
+async def put_model(req: ModelSelect, request: Request) -> dict[str, Any]:
     updates: dict[str, Any] = {}
     official = None
     if req.provider is not None and str(req.provider).strip():
@@ -335,13 +400,20 @@ async def put_model(req: ModelSelect) -> dict[str, Any]:
             updates["provider"] = official
         if mid:
             updates["model"] = mid
-    if updates:
-        save_settings(updates)
-    sess = _resolve_session(req.session_id) if req.session_id else store.active()
-    store.select(sess.id)
-    sess.provider = get_provider()
-    sess.model = get_model(sess.provider)
-    store.save(sess)
+    sess = _resolve_session(req.session_id, request) if req.session_id else store.active(owner=session_owner(request))
+    if is_public_mode():
+        if "provider" in updates:
+            sess.provider = updates["provider"]
+        if "model" in updates:
+            sess.model = updates["model"]
+        store.save(sess)
+    else:
+        if updates:
+            save_settings(updates)
+        store.select(sess.id)
+        sess.provider = get_provider()
+        sess.model = get_model(sess.provider)
+        store.save(sess)
     payload = {
         **models_catalog(),
         "ok": True,
@@ -406,71 +478,91 @@ async def decide_approval(approval_id: str, req: ApprovalDecision) -> dict[str, 
     }
 
 
-@app.get("/api/media/{folder}/{name}")
-async def media(folder: str, name: str) -> FileResponse:
+@app.get("/api/media/{folder}/{name:path}")
+async def media(folder: str, name: str, request: Request) -> FileResponse:
     if folder not in MEDIA_FOLDERS:
         raise HTTPException(status_code=404, detail="不支持的目录")
-    if "/" in name or "\\" in name or name in (".", "..") or not name:
+    raw = (name or "").replace("\\", "/").strip()
+    if not raw or raw in (".", "..") or ".." in raw.split("/"):
+        raise HTTPException(status_code=400, detail="非法文件名")
+    parts = [p for p in raw.split("/") if p]
+    if not parts or any(p in (".", "..") for p in parts):
         raise HTTPException(status_code=400, detail="非法文件名")
     base = (WORKSPACE / folder).resolve()
-    target = (base / name).resolve()
+    if is_public_mode():
+        vid = get_visitor_id(request)
+        if len(parts) == 1:
+            target = (base / vid / parts[0]).resolve()
+        elif len(parts) == 2:
+            if parts[0] != vid:
+                raise HTTPException(status_code=404, detail="文件不存在")
+            target = (base / parts[0] / parts[1]).resolve()
+        else:
+            raise HTTPException(status_code=400, detail="非法文件名")
+    else:
+        if len(parts) != 1:
+            raise HTTPException(status_code=400, detail="非法文件名")
+        target = (base / parts[0]).resolve()
     if not target.is_relative_to(base) or not target.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
     return FileResponse(target)
 
 
 @app.get("/api/history")
-async def history(session_id: str | None = None) -> dict[str, Any]:
-    sess = _resolve_session(session_id)
-    return {"messages": list(sess.ui_turns), **_status_payload(sess), "session_id": sess.id}
+async def history(request: Request, session_id: str | None = None) -> dict[str, Any]:
+    sess = _resolve_session(session_id, request)
+    return {"messages": list(sess.ui_turns), **_status_payload(sess, request), "session_id": sess.id}
 
 
 @app.get("/api/sessions")
-async def list_sessions() -> dict[str, Any]:
-    active = store.active()
+async def list_sessions(request: Request) -> dict[str, Any]:
+    owner = session_owner(request)
+    active = store.active(owner=owner)
     return {
-        "sessions": store.list(),
+        "sessions": store.list(owner=owner),
         "active_id": active.id,
-        **_status_payload(),
+        **_status_payload(active, request),
     }
 
 
 @app.post("/api/sessions")
-async def create_session() -> dict[str, Any]:
-    sess = store.create()
-    store.select(sess.id)
-    return _session_view(sess)
+async def create_session(request: Request) -> dict[str, Any]:
+    owner = session_owner(request)
+    sess = store.create(owner=owner or "")
+    store.select(sess.id, owner=owner)
+    return _session_view(sess, request)
 
 
 @app.post("/api/sessions/{session_id}/select")
-async def select_session(session_id: str) -> dict[str, Any]:
-    sess = store.select(session_id)
+async def select_session(session_id: str, request: Request) -> dict[str, Any]:
+    sess = store.select(session_id, owner=session_owner(request))
     if sess is None:
         raise HTTPException(status_code=404, detail="会话不存在")
-    return _session_view(sess)
+    return _session_view(sess, request)
 
 
 @app.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str) -> dict[str, Any]:
-    if not store.delete(session_id):
+async def delete_session(session_id: str, request: Request) -> dict[str, Any]:
+    owner = session_owner(request)
+    if not store.delete(session_id, owner=owner):
         raise HTTPException(status_code=404, detail="会话不存在")
-    active = store.active()
+    active = store.active(owner=owner)
     return {
         "ok": True,
-        "sessions": store.list(),
+        "sessions": store.list(owner=owner),
         "active_id": active.id,
         "messages": list(active.ui_turns),
-        **_status_payload(),
+        **_status_payload(active, request),
         "session_id": active.id,
     }
 
 
 @app.post("/api/clear")
-async def clear() -> dict[str, Any]:
-    sess = store.active()
+async def clear(request: Request) -> dict[str, Any]:
+    sess = store.active(owner=session_owner(request))
     sess.reset()
     store.save(sess)
-    return {"ok": True, "messages": [], **_status_payload(), "session_id": sess.id}
+    return {"ok": True, "messages": [], **_status_payload(sess, request), "session_id": sess.id}
 
 
 def _require_api_key(provider: str | None = None) -> str:
@@ -500,7 +592,8 @@ def _resolve_selection(
                 sess.model = mid
                 changed = True
         if provider or model:
-            save_settings({"provider": pid, "model": mid})
+            if not is_public_mode():
+                save_settings({"provider": pid, "model": mid})
             sess.provider = pid
             sess.model = mid
             changed = True
@@ -525,7 +618,8 @@ def _collect_turn(
     """Run the agent loop and persist UI + model history."""
     pid, mid = _resolve_selection(sess, provider, model)
     _require_api_key(pid)
-    store.select(sess.id)
+    if not is_public_mode():
+        store.select(sess.id)
     sess.refresh_system_prompt()
     sess.maybe_title_from_user(user_text)
     content, image_paths = _user_text_and_images(sess, user_text)
@@ -588,6 +682,7 @@ def _collect_turn(
 
 @app.post("/api/upload")
 async def upload(
+    request: Request,
     file: UploadFile = File(...),
     session_id: str | None = None,
 ) -> dict[str, Any]:
@@ -597,15 +692,16 @@ async def upload(
     if declared is not None and declared > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="文件过大，上限约 5MB")
     raw = await file.read()
+    owner = session_owner(request) or ""
     try:
-        payload = json.loads(save_upload(filename, raw))
+        payload = json.loads(save_upload(filename, raw, owner=owner if is_public_mode() else ""))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"上传失败: {exc}") from exc
     if payload.get("error"):
         raise HTTPException(status_code=400, detail=str(payload["error"]))
     ext = Path(payload.get("filename") or filename).suffix.lower()
     if ext in IMAGE_EXTS:
-        sess = _resolve_session(session_id)
+        sess = _resolve_session(session_id, request)
         sess.attach_pending_image(
             str(payload.get("path") or ""),
             IMAGE_EXTS[ext],
@@ -613,27 +709,31 @@ async def upload(
         )
         store.save(sess)
         payload["is_image"] = True
-        payload["media_url"] = f"/api/media/uploads/{payload.get('filename')}"
+        rel = str(payload.get("path") or f"uploads/{payload.get('filename')}")
+        if rel.startswith("uploads/"):
+            payload["media_url"] = "/api/media/" + rel
+        else:
+            payload["media_url"] = f"/api/media/uploads/{payload.get('filename')}"
     else:
         payload["is_image"] = False
     return {"ok": True, **payload}
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest) -> dict[str, Any]:
+async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
     text = req.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="消息不能为空")
-    sess = _resolve_session(req.session_id)
+    sess = _resolve_session(req.session_id, request)
     return _collect_turn(sess, text, provider=req.provider, model=req.model)
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(req: ChatRequest) -> StreamingResponse:
+async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
     text = req.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="消息不能为空")
-    sess = _resolve_session(req.session_id)
+    sess = _resolve_session(req.session_id, request)
     pid, mid = _resolve_selection(sess, req.provider, req.model)
     _require_api_key(pid)
 
@@ -641,7 +741,8 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         def sse(event: str, data: dict[str, Any]) -> str:
             return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-        store.select(sess.id)
+        if not is_public_mode():
+            store.select(sess.id)
         sess.refresh_system_prompt()
         sess.maybe_title_from_user(text)
         content, image_paths = _user_text_and_images(sess, text)

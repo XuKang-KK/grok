@@ -826,6 +826,17 @@
       font-size: 14px;
     }
     .auth-card .err { color: var(--danger); font-size: 12px; min-height: 18px; margin: 10px 0 0; }
+    .public-banner {
+      display: none;
+      background: var(--gold-dim);
+      color: var(--gold);
+      padding: 8px 16px;
+      font-size: 12px;
+      text-align: center;
+      border-bottom: 1px solid rgba(244,197,106,0.25);
+    }
+    .public-banner.show { display: block; }
+    body.public-visitor [data-admin-only] { display: none !important; }
 
   </style>
 </head>
@@ -881,6 +892,7 @@
           <button class="ghost" id="settingsBtn" type="button" data-i18n="settings">设置</button>
         </div>
       </header>
+      <div class="public-banner" id="publicBanner" hidden data-i18n="public.banner">对外模式已开启（仅聊天与网页工具）</div>
       <div class="warn-key" id="keyWarn" data-i18n="keyWarn">管理员尚未配置中转站密钥（设置里填写）</div>
       <div id="thread"></div>
       <div class="composer-wrap">
@@ -935,7 +947,9 @@
           <button type="button" class="lang-opt" data-lang="en">EN</button>
         </div>
       </div>
-      <div class="field">
+      <p class="hint" id="visitorAdminHint" hidden data-i18n="settings.adminOnly">管理员登录后可改密钥</p>
+      <button class="ghost" type="button" id="adminLoginBtn" hidden data-i18n="auth.adminLogin" style="width:100%;margin-bottom:14px">管理员登录</button>
+      <div class="field" data-admin-only>
         <label data-i18n="settings.ccapiKey">中转站密钥</label>
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
           <span class="key-dot" id="keyDotCcapi"></span><span id="keyStatusCcapi">未保存密钥</span>
@@ -943,7 +957,7 @@
         <input type="password" id="keyInputCcapi" placeholder="已保存则留空不修改" data-i18n-placeholder="settings.keyPlaceholder" autocomplete="off" />
         <div class="hint" data-i18n="settings.ccapiHint">OpenAI 兼容中转。到 https://ccapi.us/pricing/ 或控制台申请 token。环境变量 CCAPI_API_KEY 也可作为回退。界面永不回显。</div>
       </div>
-      <div class="field">
+      <div class="field" data-admin-only>
         <label data-i18n="settings.ccapiBase">中转站地址</label>
         <input type="text" id="ccapiBaseInput" placeholder="https://api.ccapi.ai/v1" autocomplete="off" />
         <div class="preset-row">
@@ -952,7 +966,7 @@
         </div>
         <div class="hint" data-i18n="settings.ccapiBaseHint">默认 https://api.ccapi.ai/v1。也可填 https://api.ccapi.us/v1 或其它兼容基址。</div>
       </div>
-      <details class="advanced-direct" id="advancedDirect">
+      <details class="advanced-direct" id="advancedDirect" data-admin-only>
         <summary data-i18n="settings.advanced">高级直连</summary>
         <p class="hint" data-i18n="settings.advancedHint">仅调试用。默认对话走中转站；这三家官方密钥不是对外主路径。</p>
       <div class="field">
@@ -985,11 +999,11 @@
         <input type="text" id="modelInput" placeholder="gpt-5.6-terra" />
         <div class="hint" data-i18n="settings.modelHint">也可在右侧「模型」面板点选。切换后对下一条消息生效。</div>
       </div>
-      <div class="field">
+      <div class="field" data-admin-only>
         <label data-i18n="settings.imageModel">图像模型</label>
         <input type="text" id="imageModelInput" placeholder="grok-imagine-image-2.0" />
       </div>
-      <div class="field">
+      <div class="field" data-admin-only>
         <label data-i18n="settings.accessToken">访问口令</label>
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
           <span class="key-dot" id="keyDotToken"></span><span id="keyStatusToken">未设置口令</span>
@@ -998,14 +1012,16 @@
         <label class="check"><input type="checkbox" id="clearAccessToken" /> <span data-i18n="settings.clearAccessToken">清除已保存的访问口令</span></label>
         <div class="hint" data-i18n="settings.accessTokenHint">用于局域网保护。设置后调用 API 需要口令。界面永不回显。也可写在 .env 的 KK_ACCESS_TOKEN。</div>
       </div>
-      <div class="field">
+      <div class="field" data-admin-only>
         <label class="check"><input type="checkbox" id="localBrowser" /> <span data-i18n="settings.localBrowser">允许浏览器访问 localhost / 内网（默认关闭）</span></label>
       </div>
       <button class="save-btn" type="button" id="saveSettings" data-i18n="settings.save">保存设置</button>
       <p class="hint" id="settingsMsg" style="margin-top:10px"></p>
+      <div data-admin-only>
       <h3 style="font-size:13px;margin:22px 0 8px" data-i18n="settings.mcpTitle">MCP 服务器</h3>
       <p class="hint" data-i18n="settings.mcpHint">从 data/mcp.json 加载。可复制仓库根目录 mcp.example.json。</p>
       <div id="mcpList"></div>
+      </div>
     </div>
   </aside>
   <aside class="drawer" id="routinesDrawer" aria-label="例程" data-i18n-aria="routines">
@@ -1124,6 +1140,10 @@
       try {
         const h = await _rawFetch("/api/health");
         const data = await h.json();
+        if (data && data.public_mode) {
+          applyPublicUi(data);
+          return;
+        }
         if (data && data.auth_required) {
           const probe = await _rawFetch("/api/settings");
           if (probe.status === 401) showAuthGate();
@@ -1150,7 +1170,37 @@
     let activeFamily = "gpt";
     const FAMILY_IDS = ["gpt", "claude", "grok"];
 
+    function applyPublicUi(data) {
+      if (!data) return;
+      const pub = !!data.public_mode;
+      const admin = !!data.is_admin;
+      const visitor = pub && !admin;
+      document.body.classList.toggle("public-visitor", visitor);
+      const banner = document.getElementById("publicBanner");
+      if (banner) {
+        banner.hidden = !pub;
+        banner.classList.toggle("show", pub);
+        if (pub) banner.textContent = t("public.banner");
+      }
+      const routinesBtn = document.getElementById("routinesBtn");
+      if (routinesBtn) routinesBtn.style.display = visitor ? "none" : "";
+      const adminLogin = document.getElementById("adminLoginBtn");
+      if (adminLogin) adminLogin.hidden = !visitor;
+      const hint = document.getElementById("visitorAdminHint");
+      if (hint) hint.hidden = !visitor;
+      const tagline = document.querySelector("header .brand p");
+      if (tagline) tagline.textContent = pub ? t("public.tagline") : t("header.tagline");
+      const composerHint = document.querySelector(".composer-wrap .hint");
+      if (composerHint) composerHint.textContent = visitor ? t("composer.hintPublic") : t("composer.hint");
+    }
     function demos() {
+      if (document.body.classList.contains("public-visitor")) {
+        return [
+          { tag: t("demo.search.tag"), text: t("demo.search.text") },
+          { tag: t("demo.web.tag"), text: t("demo.web.text") },
+          { tag: t("demo.image.tag"), text: t("demo.image.text") },
+        ];
+      }
       return [
         { tag: t("demo.search.tag"), text: t("demo.search.text") },
         { tag: t("demo.read.tag"), text: t("demo.read.text") },
@@ -1717,6 +1767,7 @@
         warn.textContent = show ? t("rail.noRelayKey") : "";
       }
       syncKeyDot(Object.assign({}, data || {}, { has_api_key: keys }));
+      applyPublicUi(Object.assign({}, catalog, data || {}));
     }
     async function loadCatalog() {
       const res = await fetch("/api/models");
@@ -1815,6 +1866,12 @@
       if (tokClr) tokClr.checked = false;
       syncRail(data);
       syncKeyDot(data);
+      applyPublicUi(data);
+      if (data && data.public_mode && !data.is_admin) {
+        const box = document.getElementById("mcpList");
+        if (box) box.innerHTML = "";
+        return;
+      }
       const mcpRes = await fetch("/api/mcp");
       const mcp = await mcpRes.json();
       const box = document.getElementById("mcpList");
@@ -1864,6 +1921,8 @@
       });
     }
 
+    const adminLoginBtn = document.getElementById("adminLoginBtn");
+    if (adminLoginBtn) adminLoginBtn.addEventListener("click", showAuthGate);
     document.getElementById("settingsBtn").addEventListener("click", async () => {
       openDrawer(settingsDrawer);
       try { await loadSettingsPanel(); } catch {}
@@ -2044,6 +2103,7 @@
           hideAuthGate();
           loadCatalog().catch(() => {});
           loadHistory();
+          loadSettingsPanel().catch(() => {});
         } catch (err) {
           if (msg) msg.textContent = t("auth.bad");
         }

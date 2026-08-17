@@ -27,6 +27,11 @@ def _isolate(tmp_path, monkeypatch) -> None:
         "HOST",
         "PORT",
         "KK_CORS_ORIGINS",
+        "KK_PUBLIC",
+        "PUBLIC_MODE",
+        "KK_ALLOWED_HOSTS",
+        "KK_CHAT_RATE",
+        "KK_CHAT_WINDOW_SEC",
     ):
         monkeypatch.delenv(name, raising=False)
 
