@@ -431,6 +431,133 @@
       .backdrop.show { display: block; }
       button.icon { display: inline-flex; }
     }
+  
+    .drawer-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.45);
+      z-index: 16;
+    }
+    .drawer-backdrop.show { display: block; }
+    .drawer {
+      position: fixed;
+      top: 0; right: 0; bottom: 0;
+      width: min(400px, 100vw);
+      background: #101014;
+      border-left: 1px solid var(--line);
+      z-index: 17;
+      transform: translateX(105%);
+      transition: transform .2s ease;
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--shadow);
+    }
+    .drawer.open { transform: none; }
+    .drawer-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 16px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .drawer-head h2 { margin: 0; font-size: 15px; }
+    .drawer-body { flex: 1; overflow-y: auto; padding: 14px 16px 24px; }
+    .field { margin-bottom: 14px; }
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .field input[type="text"], .field input[type="password"], .field textarea {
+      width: 100%;
+      background: #18181c;
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 9px 10px;
+      font: inherit;
+      font-size: 13px;
+    }
+    .field textarea { min-height: 72px; resize: vertical; }
+    .field .hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .key-dot {
+      display: inline-block;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--danger);
+      margin-right: 6px;
+    }
+    .key-dot.on { background: var(--ok); }
+    .save-btn, .add-btn {
+      background: var(--gold);
+      color: #1a1408;
+      border: 0;
+      border-radius: 10px;
+      padding: 9px 14px;
+      font-weight: 650;
+      cursor: pointer;
+      width: 100%;
+    }
+    .mcp-item, .routine-item {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      background: rgba(255,255,255,0.03);
+      font-size: 12px;
+    }
+    .mcp-item .name, .routine-item .name { font-weight: 600; font-size: 13px; }
+    .mcp-item .err { color: var(--danger); margin-top: 4px; }
+    .routine-item .meta { color: var(--muted); margin: 4px 0 8px; }
+    .routine-item .actions { display: flex; gap: 6px; }
+    .routine-item button, .approval button {
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+      padding: 5px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .approval {
+      max-width: min(680px, 86%);
+      margin: 0 44px 10px;
+      background: rgba(244,197,106,.1);
+      border: 1px solid rgba(244,197,106,.35);
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 13px;
+    }
+    .approval .cmd {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      background: #0d0d10;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 8px 0;
+      word-break: break-all;
+    }
+    .approval .btns { display: flex; gap: 8px; }
+    .approval button.yes { background: rgba(125,206,160,.2); border-color: var(--ok); color: var(--ok); }
+    .approval button.no { background: rgba(255,122,122,.12); border-color: var(--danger); color: var(--danger); }
+    .bubble img.gen, .bubble img.vision, .tool img.gen {
+      display: block;
+      max-width: 100%;
+      border-radius: 10px;
+      margin-top: 8px;
+      border: 1px solid var(--line);
+    }
+    .tool.sub { border-color: rgba(244,197,106,.22); }
+    .user-thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .user-thumbs img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+
   </style>
 </head>
 <body>
@@ -464,14 +591,16 @@
           </div>
           <div>
             <h1 id="chatTitle">Grok 助手</h1>
-            <p>搜索 · 文件 · 上传 · 记忆 · 网页</p>
+            <p>搜索 · 文件 · 浏览器 · 视觉 · 例程</p>
           </div>
         </div>
         <div class="header-actions">
           <span class="model-pill" id="modelPill">grok-4.6</span>
+          <button class="ghost" id="routinesBtn" type="button">例程</button>
+          <button class="ghost" id="settingsBtn" type="button">设置</button>
         </div>
       </header>
-      <div class="warn-key" id="keyWarn">未检测到 XAI_API_KEY。请复制 .env.example 为 .env，到 https://console.x.ai 创建密钥后重启服务。</div>
+      <div class="warn-key" id="keyWarn">未检测到 XAI_API_KEY。请点右上角「设置」填写密钥（立即生效，无需重启），或写入 .env。</div>
       <div id="thread"></div>
       <div class="composer-wrap">
         <div class="upload-chips" id="uploadChips" hidden></div>
@@ -485,10 +614,69 @@
           <textarea id="input" rows="1" placeholder="问点什么… Enter 发送，Shift+Enter 换行"></textarea>
           <button id="send" type="submit" title="发送">↑</button>
         </form>
-        <div class="hint">工具在本机 workspace 沙箱中运行，不是安全隔离环境。记忆会跨会话保留。可上传文件到 uploads/。</div>
+        <div class="hint">工具在本机 workspace 沙箱中运行，不是安全隔离环境。中风险命令需批准。可上传图片做视觉理解。</div>
       </div>
     </div>
   </div>
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="drawer" id="settingsDrawer" aria-label="设置">
+    <div class="drawer-head">
+      <h2>设置</h2>
+      <button class="ghost" type="button" id="closeSettings">关闭</button>
+    </div>
+    <div class="drawer-body">
+      <div class="field">
+        <label>XAI API Key</label>
+        <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
+          <span class="key-dot" id="keyDot"></span><span id="keyStatus">未保存密钥</span>
+        </div>
+        <input type="password" id="keyInput" placeholder="已保存则留空不修改" autocomplete="off" />
+        <div class="hint">密钥只写到本机 data/settings.json，界面永不回显。到 https://console.x.ai 申请。</div>
+      </div>
+      <div class="field">
+        <label>对话模型 GROK_MODEL</label>
+        <input type="text" id="modelInput" placeholder="grok-4.6" />
+      </div>
+      <div class="field">
+        <label>图像模型</label>
+        <input type="text" id="imageModelInput" placeholder="grok-imagine-image-2.0" />
+      </div>
+      <div class="field">
+        <label class="check"><input type="checkbox" id="localBrowser" /> 允许浏览器访问 localhost / 内网（默认关闭）</label>
+      </div>
+      <button class="save-btn" type="button" id="saveSettings">保存设置</button>
+      <p class="hint" id="settingsMsg" style="margin-top:10px"></p>
+      <h3 style="font-size:13px;margin:22px 0 8px">MCP 服务器</h3>
+      <p class="hint">从 data/mcp.json 加载。可复制仓库根目录 mcp.example.json。</p>
+      <div id="mcpList"></div>
+    </div>
+  </aside>
+  <aside class="drawer" id="routinesDrawer" aria-label="例程">
+    <div class="drawer-head">
+      <h2>例程</h2>
+      <button class="ghost" type="button" id="closeRoutines">关闭</button>
+    </div>
+    <div class="drawer-body">
+      <p class="hint" style="margin-top:0">Cron 按时区 Asia/Shanghai。后台到点后把提示词交给助手执行。</p>
+      <div class="field">
+        <label>名称</label>
+        <input type="text" id="routineName" placeholder="每日简报" />
+      </div>
+      <div class="field">
+        <label>Cron（分 时 日 月 周）</label>
+        <input type="text" id="routineCron" placeholder="0 9 * * *" />
+      </div>
+      <div class="field">
+        <label>提示词</label>
+        <textarea id="routinePrompt" placeholder="用 web_search 总结今天的 AI 要闻，写进 workspace/daily.md"></textarea>
+      </div>
+      <button class="add-btn" type="button" id="addRoutine">添加例程</button>
+      <p class="hint" id="routineMsg" style="margin-top:10px"></p>
+      <h3 style="font-size:13px;margin:22px 0 8px">已保存</h3>
+      <div id="routineList"></div>
+    </div>
+  </aside>
+
   <script>
     const thread = document.getElementById("thread");
     const form = document.getElementById("form");
@@ -509,10 +697,12 @@
     const DEMOS = [
       { tag: "搜索", text: "帮我搜一下 xAI Grok API 怎么做 function calling" },
       { tag: "读文件", text: "读一下 workspace 里的 sample.txt" },
-      { tag: "上传", text: "我刚上传了文件，请用 read_file 读一下 uploads/ 目录里最新的文本" },
       { tag: "写文件", text: "在 workspace 里写一个 notes.txt，写上三行待办事项" },
       { tag: "记忆", text: "记住：我叫小康，喜欢简洁的中文回答" },
       { tag: "网页", text: "抓取 https://example.com 的页面摘要" },
+      { tag: "浏览器", text: "用浏览器打开 https://example.com，做一次 snapshot，然后总结页面" },
+      { tag: "生图", text: "生成一张水墨风格的熊猫坐在竹林里的图片" },
+      { tag: "子助手", text: "用子助手去搜索 Playwright 官方安装步骤，并写进 workspace/playwright-notes.txt" },
     ];
 
     function escapeHtml(s) {
@@ -565,12 +755,26 @@
         : '<div class="avatar">G</div>';
     }
 
-    function appendUser(text) {
+    function mediaSrc(path) {
+      if (!path) return "";
+      if (String(path).startsWith("/api/")) return path;
+      const parts = String(path).split("/");
+      if (parts.length >= 2) return "/api/media/" + parts[0] + "/" + parts.slice(1).join("/");
+      return "";
+    }
+    function appendUser(text, images) {
       const empty = thread.querySelector(".empty");
       if (empty) empty.remove();
       const el = document.createElement("div");
       el.className = "msg user";
-      el.innerHTML = `${avatar("user")}<div class="bubble">${escapeHtml(text)}</div>`;
+      let thumbs = "";
+      if (images && images.length) {
+        thumbs = '<div class="user-thumbs">' + images.map(p => {
+          const src = mediaSrc(p);
+          return src ? '<img class="vision" src="' + escapeHtml(src) + '" alt="">' : "";
+        }).join("") + "</div>";
+      }
+      el.innerHTML = `${avatar("user")}<div class="bubble">${escapeHtml(text)}${thumbs}</div>`;
       thread.appendChild(el);
       thread.scrollTop = thread.scrollHeight;
     }
@@ -596,11 +800,13 @@
       box.hidden = false;
       const row = document.createElement("div");
       const cls = running ? "running" : (data.ok === false ? "fail" : "ok");
-      row.className = "tool " + cls;
+      const sub = data.source === "subagent" || (data.label || "").indexOf("子助手") === 0;
+      row.className = "tool " + cls + (sub ? " sub" : "");
       row.dataset.name = data.name || "";
+      const img = (!running && data.image_url) ? '<img class="gen" src="' + escapeHtml(data.image_url) + '" alt="">' : "";
       row.innerHTML = `<div class="dot"></div><div><b>${escapeHtml(data.label || data.name || "工具")}</b>
         ${data.args_summary ? " · " + escapeHtml(data.args_summary) : ""}
-        <div>${running ? "正在调用工具…" : escapeHtml(data.summary || "")}</div></div>`;
+        <div>${running ? "正在调用工具…" : escapeHtml(data.summary || "")}</div>${img}</div>`;
       box.appendChild(row);
       thread.scrollTop = thread.scrollHeight;
       return row;
@@ -613,7 +819,7 @@
       }
       thread.innerHTML = "";
       for (const m of messages) {
-        if (m.role === "user") appendUser(m.content);
+        if (m.role === "user") appendUser(m.content, m.images);
         else {
           const wrap = appendAssistantShell();
           wrap.querySelector("[data-status]").remove();
@@ -657,6 +863,7 @@
       renderSessions(data.sessions || [], sessionId);
       modelPill.textContent = data.model || "grok-4.6";
       keyWarn.style.display = data.has_api_key ? "none" : "block";
+      syncKeyDot(data.has_api_key);
       return data;
     }
 
@@ -769,6 +976,9 @@
               status.remove();
               body.parentElement.style.display = "flex";
               body.innerHTML = renderMarkdown(data.content || "");
+            } else if (event === "approval_required") {
+              status.textContent = "等待批准命令…";
+              addApproval(wrap, data);
             } else if (event === "error") {
               status.remove();
               const err = document.createElement("div");
@@ -827,7 +1037,8 @@
       fd.append("file", file);
       uploadBtn.disabled = true;
       try {
-        const res = await fetch("/api/upload", { method: "POST", body: fd });
+        const q = sessionId ? ("?session_id=" + encodeURIComponent(sessionId)) : "";
+        const res = await fetch("/api/upload" + q, { method: "POST", body: fd });
         let data = {};
         try { data = await res.json(); } catch {}
         if (!res.ok) {
@@ -872,7 +1083,176 @@
       backdrop.classList.add("show");
     });
     backdrop.addEventListener("click", closeSidebar);
+
+    function syncKeyDot(has) {
+      const dot = document.getElementById("keyDot");
+      const st = document.getElementById("keyStatus");
+      if (!dot || !st) return;
+      dot.classList.toggle("on", !!has);
+      st.textContent = has ? "已保存密钥（不回显）" : "未保存密钥";
+    }
+
+    function addApproval(wrap, data) {
+      const box = document.createElement("div");
+      box.className = "approval";
+      box.innerHTML = `<div><b>需要批准才能执行</b></div>
+        <div class="cmd">${escapeHtml(data.command || "")}</div>
+        <div style="color:var(--muted);margin-bottom:8px">${escapeHtml(data.reason || "中风险命令")}</div>
+        <div class="btns">
+          <button type="button" class="yes">批准</button>
+          <button type="button" class="no">拒绝</button>
+        </div>
+        <div class="hint" style="margin-top:8px">约 ${data.timeout || 60} 秒后未操作将自动拒绝</div>`;
+      const tools = wrap.querySelector(".tools");
+      if (tools) tools.after(box);
+      else wrap.appendChild(box);
+      async function decide(decision) {
+        box.querySelectorAll("button").forEach(b => b.disabled = true);
+        try {
+          await fetch("/api/approvals/" + encodeURIComponent(data.id), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ decision }),
+          });
+        } catch {}
+        box.querySelector(".hint").textContent = decision === "approve" ? "已批准，继续执行…" : "已拒绝";
+      }
+      box.querySelector(".yes").addEventListener("click", () => decide("approve"));
+      box.querySelector(".no").addEventListener("click", () => decide("deny"));
+    }
+
+    const settingsDrawer = document.getElementById("settingsDrawer");
+    const routinesDrawer = document.getElementById("routinesDrawer");
+    const drawerBackdrop = document.getElementById("drawerBackdrop");
+
+    function closeDrawers() {
+      settingsDrawer.classList.remove("open");
+      routinesDrawer.classList.remove("open");
+      drawerBackdrop.classList.remove("show");
+    }
+    function openDrawer(el) {
+      closeSidebar();
+      settingsDrawer.classList.remove("open");
+      routinesDrawer.classList.remove("open");
+      el.classList.add("open");
+      drawerBackdrop.classList.add("show");
+    }
+
+    async function loadSettingsPanel() {
+      const res = await fetch("/api/settings");
+      const data = await res.json();
+      document.getElementById("modelInput").value = data.model || "grok-4.6";
+      document.getElementById("imageModelInput").value = data.image_model || "grok-imagine-image-2.0";
+      document.getElementById("localBrowser").checked = !!data.allow_local_browser;
+      document.getElementById("keyInput").value = "";
+      syncKeyDot(data.has_api_key);
+      keyWarn.style.display = data.has_api_key ? "none" : "block";
+      modelPill.textContent = data.model || "grok-4.6";
+      const mcpRes = await fetch("/api/mcp");
+      const mcp = await mcpRes.json();
+      const box = document.getElementById("mcpList");
+      const servers = mcp.servers || [];
+      if (!servers.length) {
+        box.innerHTML = '<p class="hint">尚未配置。复制 mcp.example.json 为 data/mcp.json 后刷新。</p>';
+      } else {
+        box.innerHTML = servers.map(s => `<div class="mcp-item">
+          <div class="name">${escapeHtml(s.name)} ${s.enabled ? (s.ok ? "· 已连接" : "· 失败") : "· 未启用"}</div>
+          <div class="meta">${escapeHtml((s.tools || []).join(", ") || "无工具")}</div>
+          ${s.error ? '<div class="err">' + escapeHtml(s.error) + "</div>" : ""}
+          ${s.note ? '<div class="hint">' + escapeHtml(s.note) + "</div>" : ""}
+        </div>`).join("");
+      }
+    }
+
+    async function loadRoutinesPanel() {
+      const res = await fetch("/api/routines");
+      const data = await res.json();
+      const box = document.getElementById("routineList");
+      const items = data.routines || [];
+      if (!items.length) {
+        box.innerHTML = '<p class="hint">还没有例程。</p>';
+        return;
+      }
+      box.innerHTML = "";
+      items.forEach(r => {
+        const el = document.createElement("div");
+        el.className = "routine-item";
+        el.innerHTML = `<div class="name">${escapeHtml(r.name)}</div>
+          <div class="meta">${escapeHtml(r.cron)} · ${r.paused ? "已暂停" : "运行中"}
+          ${r.last_run_at ? "<br>上次：" + escapeHtml(r.last_run_at) : ""}
+          ${r.last_status ? " · " + escapeHtml(r.last_status) : ""}</div>
+          <div class="actions">
+            <button type="button" data-act="${r.paused ? "resume" : "pause"}">${r.paused ? "恢复" : "暂停"}</button>
+            <button type="button" data-act="delete">删除</button>
+          </div>`;
+        el.querySelectorAll("button").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            const act = btn.dataset.act;
+            if (act === "delete") await fetch("/api/routines/" + r.id, { method: "DELETE" });
+            else await fetch("/api/routines/" + r.id + "/" + act, { method: "POST" });
+            loadRoutinesPanel();
+          });
+        });
+        box.appendChild(el);
+      });
+    }
+
+    document.getElementById("settingsBtn").addEventListener("click", async () => {
+      openDrawer(settingsDrawer);
+      try { await loadSettingsPanel(); } catch {}
+    });
+    document.getElementById("routinesBtn").addEventListener("click", async () => {
+      openDrawer(routinesDrawer);
+      try { await loadRoutinesPanel(); } catch {}
+    });
+    document.getElementById("closeSettings").addEventListener("click", closeDrawers);
+    document.getElementById("closeRoutines").addEventListener("click", closeDrawers);
+    drawerBackdrop.addEventListener("click", closeDrawers);
+    document.getElementById("saveSettings").addEventListener("click", async () => {
+      const body = {
+        grok_model: document.getElementById("modelInput").value.trim(),
+        image_model: document.getElementById("imageModelInput").value.trim(),
+        allow_local_browser: document.getElementById("localBrowser").checked,
+      };
+      const key = document.getElementById("keyInput").value;
+      if (key) body.xai_api_key = key;
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      document.getElementById("keyInput").value = "";
+      document.getElementById("settingsMsg").textContent = res.ok ? "已保存，立即生效。" : (data.detail || "保存失败");
+      syncKeyDot(data.has_api_key);
+      keyWarn.style.display = data.has_api_key ? "none" : "block";
+      modelPill.textContent = data.model || body.grok_model || "grok-4.6";
+    });
+    document.getElementById("addRoutine").addEventListener("click", async () => {
+      const body = {
+        name: document.getElementById("routineName").value.trim(),
+        cron: document.getElementById("routineCron").value.trim(),
+        prompt: document.getElementById("routinePrompt").value.trim(),
+      };
+      const res = await fetch("/api/routines", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      const msg = document.getElementById("routineMsg");
+      if (!res.ok) {
+        msg.textContent = typeof data.detail === "string" ? data.detail : "创建失败";
+        return;
+      }
+      msg.textContent = "已添加";
+      document.getElementById("routineName").value = "";
+      document.getElementById("routinePrompt").value = "";
+      loadRoutinesPanel();
+    });
+
     loadHistory();
   </script>
+
 </body>
 </html>

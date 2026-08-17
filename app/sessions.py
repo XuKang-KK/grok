@@ -44,6 +44,7 @@ class Session:
         self.updated_at: str = data.get("updated_at") or self.created_at
         self.messages: list[dict[str, Any]] = list(data.get("messages") or [])
         self.ui_turns: list[dict[str, Any]] = list(data.get("ui_turns") or [])
+        self.pending_images: list[dict[str, Any]] = list(data.get("pending_images") or [])
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +54,7 @@ class Session:
             "updated_at": self.updated_at,
             "messages": self.messages,
             "ui_turns": self.ui_turns,
+            "pending_images": self.pending_images,
         }
 
     def meta(self) -> dict[str, Any]:
@@ -81,8 +83,36 @@ class Session:
     def reset(self) -> None:
         self.messages = new_system_messages()
         self.ui_turns = []
+        self.pending_images = []
         self.title = "新对话"
         self.updated_at = _now()
+
+    def attach_pending_image(self, path: str, mime: str, filename: str) -> None:
+        self.pending_images.append(
+            {"path": path, "mime": mime, "filename": filename}
+        )
+
+    def take_user_content(self, text: str) -> str | list[dict[str, Any]]:
+        """Build the next user message, attaching pending images as vision parts."""
+        images = list(self.pending_images)
+        self.pending_images = []
+        if not images:
+            return text
+        from app.tools import file_to_data_url
+
+        parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        for img in images:
+            url = file_to_data_url(str(img.get("path") or ""))
+            if url:
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": url, "detail": "high"},
+                    }
+                )
+        if len(parts) == 1:
+            return text
+        return parts
 
     def maybe_title_from_user(self, text: str) -> None:
         if self.title and self.title != "新对话":

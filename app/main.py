@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -19,16 +21,49 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 from app.agent import get_api_key, get_model, run_turn  # noqa: E402
-from app.tools import MAX_UPLOAD_BYTES, save_upload  # noqa: E402
+from app.approvals import store as approval_store  # noqa: E402
 from app.memory import ensure_data_dir  # noqa: E402
+from app.mcp_client import mcp_status  # noqa: E402
+from app.routines import (  # noqa: E402
+    create_routine,
+    delete_routine,
+    list_routines,
+    set_paused,
+    start_scheduler,
+    stop_scheduler,
+)
 from app.sessions import Session, SessionStore  # noqa: E402
+from app.settings import public_settings, save_settings  # noqa: E402
+from app.tools import IMAGE_EXTS, MAX_UPLOAD_BYTES, WORKSPACE, save_upload  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+MEDIA_FOLDERS = {"generated", "uploads", "screenshots"}
 
 ensure_data_dir()
 store = SessionStore()
 
-app = FastAPI(title="Grok 助手", version=__version__)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if "pytest" not in sys.modules:
+        start_scheduler()
+    yield
+    stop_scheduler()
+    try:
+        from app.browser import shutdown_browser
+
+        shutdown_browser()
+    except Exception:
+        pass
+    try:
+        from app.mcp_client import shutdown_mcp
+
+        shutdown_mcp()
+    except Exception:
+        pass
+
+
+app = FastAPI(title="Grok 助手", version=__version__, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -37,11 +72,31 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
 
 
+class SettingsUpdate(BaseModel):
+    xai_api_key: str | None = None
+    grok_model: str | None = None
+    image_model: str | None = None
+    allow_local_browser: bool | None = None
+
+
+class ApprovalDecision(BaseModel):
+    decision: str = Field(..., pattern="^(approve|deny)$")
+
+
+class RoutineCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    cron: str = Field(..., min_length=5, max_length=80)
+    prompt: str = Field(..., min_length=1, max_length=4000)
+
+
 def _status_payload() -> dict[str, Any]:
     active = store.active()
+    pub = public_settings()
     return {
-        "has_api_key": bool(get_api_key()),
-        "model": get_model(),
+        "has_api_key": pub["has_api_key"],
+        "model": pub["model"],
+        "image_model": pub["image_model"],
+        "allow_local_browser": pub["allow_local_browser"],
         "workspace": str((PROJECT_ROOT / "workspace").resolve()),
         "session_id": active.id,
         "version": __version__,
@@ -75,6 +130,100 @@ async def index() -> FileResponse:
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     return {"ok": True, **_status_payload()}
+
+
+@app.get("/api/settings")
+async def get_settings() -> dict[str, Any]:
+    payload = {**public_settings(), "ok": True, "version": __version__}
+    # never leak secrets
+    for banned in ("xai_api_key", "api_key", "key"):
+        payload.pop(banned, None)
+    return payload
+
+
+@app.put("/api/settings")
+async def put_settings(req: SettingsUpdate) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    if req.xai_api_key is not None:
+        updates["xai_api_key"] = req.xai_api_key
+    if req.grok_model is not None:
+        updates["grok_model"] = req.grok_model
+    if req.image_model is not None:
+        updates["image_model"] = req.image_model
+    if req.allow_local_browser is not None:
+        updates["allow_local_browser"] = req.allow_local_browser
+    save_settings(updates)
+    payload = {**public_settings(), "ok": True}
+    for banned in ("xai_api_key", "api_key", "key"):
+        payload.pop(banned, None)
+    return payload
+
+
+@app.get("/api/mcp")
+async def get_mcp() -> dict[str, Any]:
+    return {"ok": True, **mcp_status()}
+
+
+@app.get("/api/routines")
+async def get_routines() -> dict[str, Any]:
+    return {"ok": True, "routines": list_routines(), "timezone": "Asia/Shanghai"}
+
+
+@app.post("/api/routines")
+async def post_routine(req: RoutineCreate) -> dict[str, Any]:
+    try:
+        item = create_routine(req.name, req.cron, req.prompt)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "routine": item, "routines": list_routines()}
+
+
+@app.post("/api/routines/{routine_id}/pause")
+async def pause_routine(routine_id: str) -> dict[str, Any]:
+    item = set_paused(routine_id, True)
+    if item is None:
+        raise HTTPException(status_code=404, detail="例程不存在")
+    return {"ok": True, "routine": item, "routines": list_routines()}
+
+
+@app.post("/api/routines/{routine_id}/resume")
+async def resume_routine(routine_id: str) -> dict[str, Any]:
+    item = set_paused(routine_id, False)
+    if item is None:
+        raise HTTPException(status_code=404, detail="例程不存在")
+    return {"ok": True, "routine": item, "routines": list_routines()}
+
+
+@app.delete("/api/routines/{routine_id}")
+async def remove_routine(routine_id: str) -> dict[str, Any]:
+    if not delete_routine(routine_id):
+        raise HTTPException(status_code=404, detail="例程不存在")
+    return {"ok": True, "routines": list_routines()}
+
+
+@app.post("/api/approvals/{approval_id}")
+async def decide_approval(approval_id: str, req: ApprovalDecision) -> dict[str, Any]:
+    rec = approval_store.decide(approval_id, req.decision == "approve")
+    if rec is None:
+        raise HTTPException(status_code=404, detail="批准请求不存在或已过期")
+    return {
+        "ok": True,
+        "id": rec.id,
+        "decision": "approve" if rec.decision else "deny",
+    }
+
+
+@app.get("/api/media/{folder}/{name}")
+async def media(folder: str, name: str) -> FileResponse:
+    if folder not in MEDIA_FOLDERS:
+        raise HTTPException(status_code=404, detail="不支持的目录")
+    if "/" in name or "\\" in name or name in (".", "..") or not name:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    base = (WORKSPACE / folder).resolve()
+    target = (base / name).resolve()
+    if not target.is_relative_to(base) or not target.is_file():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(target)
 
 
 @app.get("/api/history")
@@ -136,10 +285,16 @@ def _require_api_key() -> None:
         raise HTTPException(
             status_code=503,
             detail=(
-                "未配置 XAI_API_KEY。请复制 .env.example 为 .env，"
-                "到 https://console.x.ai 创建密钥后填入，再重启服务。"
+                "未配置 XAI_API_KEY。请打开设置面板填写密钥，"
+                "或写入 data/settings.json / .env（https://console.x.ai）。"
             ),
         )
+
+
+def _user_text_and_images(sess: Session, user_text: str) -> tuple[Any, list[str]]:
+    image_paths = [str(img.get("path") or "") for img in sess.pending_images if img.get("path")]
+    content = sess.take_user_content(user_text)
+    return content, image_paths
 
 
 def _collect_turn(sess: Session, user_text: str) -> dict[str, Any]:
@@ -148,12 +303,13 @@ def _collect_turn(sess: Session, user_text: str) -> dict[str, Any]:
     store.select(sess.id)
     sess.refresh_system_prompt()
     sess.maybe_title_from_user(user_text)
-    sess.messages.append({"role": "user", "content": user_text})
+    content, image_paths = _user_text_and_images(sess, user_text)
+    sess.messages.append({"role": "user", "content": content})
     tools_ui: list[dict[str, Any]] = []
     reply = ""
     error = None
 
-    for event in run_turn(sess.messages):
+    for event in run_turn(sess.messages, auto_deny_approvals=True):
         kind = event.get("type")
         if kind == "tool_end":
             tools_ui.append(
@@ -163,6 +319,8 @@ def _collect_turn(sess: Session, user_text: str) -> dict[str, Any]:
                     "args_summary": event.get("args_summary"),
                     "ok": event.get("ok"),
                     "summary": event.get("summary"),
+                    "image_url": event.get("image_url"),
+                    "source": event.get("source"),
                 }
             )
         elif kind == "message":
@@ -183,7 +341,10 @@ def _collect_turn(sess: Session, user_text: str) -> dict[str, Any]:
         "tools": tools_ui,
         "error": error,
     }
-    sess.ui_turns.append({"role": "user", "content": user_text})
+    user_turn: dict[str, Any] = {"role": "user", "content": user_text}
+    if image_paths:
+        user_turn["images"] = image_paths
+    sess.ui_turns.append(user_turn)
     sess.ui_turns.append(assistant_turn)
     store.save(sess)
     return {
@@ -196,10 +357,12 @@ def _collect_turn(sess: Session, user_text: str) -> dict[str, Any]:
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
+async def upload(
+    file: UploadFile = File(...),
+    session_id: str | None = None,
+) -> dict[str, Any]:
     """Save a small file into workspace/uploads/."""
     filename = file.filename or ""
-    # Cap before fully buffering if the client sent Content-Length.
     declared = getattr(file, "size", None)
     if declared is not None and declared > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="文件过大，上限约 5MB")
@@ -210,6 +373,19 @@ async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"上传失败: {exc}") from exc
     if payload.get("error"):
         raise HTTPException(status_code=400, detail=str(payload["error"]))
+    ext = Path(payload.get("filename") or filename).suffix.lower()
+    if ext in IMAGE_EXTS:
+        sess = _resolve_session(session_id)
+        sess.attach_pending_image(
+            str(payload.get("path") or ""),
+            IMAGE_EXTS[ext],
+            str(payload.get("filename") or ""),
+        )
+        store.save(sess)
+        payload["is_image"] = True
+        payload["media_url"] = f"/api/media/uploads/{payload.get('filename')}"
+    else:
+        payload["is_image"] = False
     return {"ok": True, **payload}
 
 
@@ -237,7 +413,8 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
         store.select(sess.id)
         sess.refresh_system_prompt()
         sess.maybe_title_from_user(text)
-        sess.messages.append({"role": "user", "content": text})
+        content, image_paths = _user_text_and_images(sess, text)
+        sess.messages.append({"role": "user", "content": content})
         tools_ui: list[dict[str, Any]] = []
         reply = ""
         error = None
@@ -254,6 +431,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                             "name": event.get("name"),
                             "label": event.get("label"),
                             "args_summary": event.get("args_summary"),
+                            "source": event.get("source"),
                         },
                     )
                 elif kind == "tool_end":
@@ -264,9 +442,22 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                         "args_summary": event.get("args_summary"),
                         "ok": event.get("ok"),
                         "summary": event.get("summary"),
+                        "image_url": event.get("image_url"),
+                        "source": event.get("source"),
                     }
                     tools_ui.append(item)
                     yield sse("tool_end", item)
+                elif kind == "approval_required":
+                    yielded_any = True
+                    yield sse(
+                        "approval_required",
+                        {
+                            "id": event.get("id"),
+                            "command": event.get("command"),
+                            "reason": event.get("reason"),
+                            "timeout": event.get("timeout"),
+                        },
+                    )
                 elif kind == "message":
                     yielded_any = True
                     reply = event.get("content") or ""
@@ -282,7 +473,10 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
             if sess.messages and sess.messages[-1].get("role") == "user":
                 sess.messages.pop()
         else:
-            sess.ui_turns.append({"role": "user", "content": text})
+            user_turn: dict[str, Any] = {"role": "user", "content": text}
+            if image_paths:
+                user_turn["images"] = image_paths
+            sess.ui_turns.append(user_turn)
             sess.ui_turns.append(
                 {
                     "role": "assistant",

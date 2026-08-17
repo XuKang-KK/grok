@@ -1,39 +1,44 @@
-# Grok 助手（本地 v0.3）
+# Grok 助手（本地 v1.0）
 
-一个可在本机运行的 Grok 风格对话助手：浏览器里聊天，模型可以循环调用工具（搜索、读/写文件、抓取网页、记忆），直到给出最终回答。v0.3 支持把本地文件上传到 `workspace/uploads/`，并用 `./start.sh` 一键启动。
+一个可在本机运行的完整 Grok 风格助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1 在 v0.3 之上补齐了设置面板、流式工具芯片、危险命令批准、视觉理解、Playwright 浏览器、MCP 客户端、定时例程、子助手和图像生成。
 
-- 后端：FastAPI + xAI Grok API（OpenAI 兼容 Chat Completions）
-- 前端：单页中文聊天界面（左侧多会话）
+- 后端：FastAPI + xAI Grok API（OpenAI 兼容 Chat Completions，默认 `grok-4.6`）
+- 前端：单页中文深色聊天界面（左侧多会话，右侧设置 / 例程）
 - 工具在项目下的 `workspace/` 目录执行（本地开发沙箱，**不是**安全隔离环境）
-- 会话与记忆持久化在 `data/`（运行时自动创建，默认不入库）
-- 上传文件保存在 `workspace/uploads/`（已 gitignore）
+- 会话、记忆、设置、例程持久化在 `data/`（已 gitignore，切勿提交密钥）
+- 上传文件在 `workspace/uploads/`，生成图在 `workspace/generated/`
 
 ## 获取 API Key
 
 1. 打开 [xAI Console](https://console.x.ai) 注册 / 登录
 2. 创建 API Key
-3. 复制 `.env.example` 为 `.env`（`./start.sh` 在缺失时会自动复制），填入密钥：
+3. 任选其一（设置面板**无需重启**）：
+   - 启动后点右上角「设置」，填入密钥并保存（写入 `data/settings.json`）
+   - 或复制 `.env.example` 为 `.env` 后填入 `XAI_API_KEY`
 
 ```bash
 cp .env.example .env
-# 编辑 .env，写入：
 # XAI_API_KEY=xai-...
+# GROK_MODEL=grok-4.6
 ```
 
-默认模型为 `grok-4.6`（支持 function calling）。如需更换，在 `.env` 中设置 `GROK_MODEL`，例如 `grok-4`、`grok-4.5`、`grok-3`。
+默认模型 `grok-4.6`（function calling + 视觉）。可在设置或 `.env` 中改 `GROK_MODEL`。
 
-API 基址：`https://api.x.ai/v1`
+API 基址：`https://api.x.ai/v1`  
+图像生成：`POST /v1/images/generations`，默认模型 `grok-imagine-image-2.0`。
+
+界面只显示「是否已保存密钥」，**永不回显**密钥本身。
 
 ## 运行（推荐）
 
-需要 Python 3.11+。在项目根目录执行：
+需要 Python 3.11+。在项目根目录：
 
 ```bash
 cd grok-assistant
 ./start.sh
 ```
 
-`start.sh` 会：没有 venv 时创建、安装依赖、缺少 `.env` 时从 `.env.example` 复制，然后在 `127.0.0.1:8000` 启动 uvicorn。
+`start.sh` 会：创建 venv、安装依赖、缺少 `.env` 时复制示例、若本机还没有 Chromium 则执行 `python -m playwright install chromium`，然后在 `127.0.0.1:8000` 启动。
 
 浏览器打开：http://127.0.0.1:8000
 
@@ -43,83 +48,96 @@ cd grok-assistant
 python -m app
 ```
 
-或手动：
+## Playwright 浏览器
+
+工具：`browser_open` / `browser_snapshot` / `browser_click` / `browser_type` / `browser_screenshot`。
+
+- 只允许 `http(s)`；默认拒绝 `file://`、localhost、私有 IP（与 `fetch_url` 相同）
+- 设置里可打开「允许浏览器访问 localhost / 内网」（`allow_local_browser`），**仍然禁止 file://**
+- Chromium 惰性启动，空闲约 3 分钟后关闭
+- 截图保存在 `workspace/screenshots/`
+
+首次使用若未装浏览器：
 
 ```bash
-python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python -m playwright install chromium
 ```
 
-## 上传文件
+## MCP
 
-输入框左侧的回形针可把本地小文件上传到沙箱 `workspace/uploads/`（约 5MB 上限）。
+从 gitignored 的 `data/mcp.json` 加载服务器。仓库根目录有可解析的示例 `mcp.example.json`（默认 `enabled: false`，不启动进程，工具列表为空且无错误）。
 
-- 文本文件可随后让模型用 `read_file` 读取（路径形如 `uploads/foo.txt`）
-- `pdf` / `png` / `jpg` 仅作为二进制保存，不解析图片内容
-- 文件名中的 `../` 等路径穿越会被拒绝
-- 上传成功后界面显示芯片，并自动插入一句 `已上传 uploads/foo.txt`，发送后模型即可看到路径
+```bash
+mkdir -p data
+cp mcp.example.json data/mcp.json
+# 如需启用内置回声示例，把 echo.servers[0].enabled 改为 true
+```
 
-接口：`POST /api/upload`（multipart 字段名 `file`）
+示例服务器命令：`python3 -m app.mcp_echo`（最小 stdio JSON-RPC，提供 `echo` 工具）。启用后模型侧工具名为 `mcp_echo_echo`。
+
+设置面板会列出每个服务器的连接状态和错误。配置解析失败时不会拖垮主程序。
+
+支持 `{ "servers": [ { "name", "command", "args", "env", "enabled" } ] }`，也兼容 `{ "mcpServers": { "name": { "command", "args" } } }`。
+
+## 例程
+
+右上角「例程」：名称 + cron + 提示词。时区固定 **Asia/Shanghai**。
+
+- 持久化 `data/routines.json`
+- 可暂停 / 恢复 / 删除
+- 后台调度到点后走同一套 agent 循环（中风险命令在例程里默认拒绝）
+- 上次运行结果写回列表
+
+Cron 为 5 段：`分 时 日 月 周`，例如每天 9:00：`0 9 * * *`。
+
+## 危险命令批准
+
+`run_command` 仍硬拦截 `rm -rf /`、`sudo`、`mkfs`、`curl|sh` 等。
+
+中风险（`rm`、`chmod`、写入沙箱外路径等）会通过 SSE 发出 `approval_required`。界面出现批准 / 拒绝按钮；约 60 秒未操作视为拒绝。
+
+接口：`POST /api/approvals/{id}`，body `{"decision":"approve"}` 或 `"deny"`。
+
+## 视觉
+
+上传 `png` / `jpg` / `webp` 后，下一轮对话会把图片以 `image_url` data URL 发给模型（xAI Chat Completions 多模态，`detail: high`）。不必再 `read_file` 二进制图。
+
+## 子助手与生图
+
+- `delegate_task(goal, context)`：嵌套工具循环，最多 5 轮，**不能再委派**，并发上限 2。界面工具芯片带「子助手」。
+- `generate_image(prompt)`：调用 xAI ` /images/generations`（`grok-imagine-image-2.0`，优先 `b64_json`），保存到 `workspace/generated/`，对话中展示。
 
 ## 内置工具
 
 | 工具 | 作用 |
 |------|------|
-| `web_search` | 公开网页搜索，返回标题 / 链接 / 摘要（`ddgs`，失败则抓取 DuckDuckGo HTML） |
-| `fetch_url` | GET 公开 http(s) URL，去掉 script/style 后返回正文（约 30k 字符）；拒绝 localhost / 内网 / `file://` |
-| `list_dir` | 列出 `workspace/` 下的文件和子目录 |
-| `read_file` | 读取 `workspace/` 内文本文件；越界、缺失、二进制会报错 |
-| `write_file` | 在 `workspace/` 内创建或覆盖文本文件（约 200KB 上限）；禁止路径穿越 |
-| `run_command` | 在 `workspace/` 下执行 shell，超时 15s，捕获 stdout/stderr/退出码 |
-| `memory_write` | 把用户偏好 / 长期事实写入 `data/memory.json`（跨会话） |
-| `memory_read` | 检索记忆；`query` 为空返回最近若干条 |
+| `web_search` | 公开网页搜索 |
+| `fetch_url` | GET 公开 http(s)，拒绝内网 / file:// |
+| `list_dir` / `read_file` / `write_file` | workspace 文件 |
+| `run_command` | workspace shell；硬拦截 + 中风险批准 |
+| `memory_write` / `memory_read` | `data/memory.json` |
+| `browser_*` | Playwright Chromium |
+| `generate_image` | xAI 图像生成 |
+| `delegate_task` | 子助手 |
+| `mcp_*` | 来自 `data/mcp.json` 的动态工具 |
 
-`run_command` 会拦截 `rm -rf /`、`sudo`、`mkfs` 等明显危险模式。这只是本地开发保护，**不是 jail**：进程、网络、宿主机并未隔离。
-
-写文件请优先让模型调用 `write_file`，而不是用 shell 重定向。
-
-工具循环最多 8 轮。界面会显示「正在调用工具…」以及每个工具的简要结果（默认走 `/api/chat/stream`）。
-
-## 多会话
-
-会话保存在 `data/sessions/<id>.json`（模型消息 + 界面回合）。
-
-- 左侧边栏列出历史对话，点「新对话」创建并切换
-- `GET /api/sessions` 列出；`POST /api/sessions` 创建
-- `POST /api/sessions/{id}/select` 切换当前会话
-- `DELETE /api/sessions/{id}` 删除
-- 发消息时可带 `session_id`；不带则使用当前会话
-- `POST /api/clear` 清空**当前**会话内容（不删除会话文件）
-
-刷新页面会从磁盘恢复当前会话。
-
-## 记忆
-
-`data/memory.json` 保存一个简短事实列表。每轮对话会把最近约 20 条注入系统提示；模型也可主动调用 `memory_write` / `memory_read`。记忆跨会话共享。
+默认聊天走 `/api/chat/stream`，工具芯片实时出现。工具循环最多 8 轮（子助手 5 轮）。
 
 ## 示例提示词
 
-打开页面后可以直接点卡片，或粘贴：
+打开页面可点卡片，或粘贴：
 
-1. **帮我搜一下 xAI Grok API 怎么做 function calling**  
-   模型应调用 `web_search`，再根据结果说明。
-
-2. **读一下 workspace 里的 sample.txt**  
-   模型应调用 `read_file`（路径如 `sample.txt`）。
-
-3. **在 workspace 里写一个 notes.txt，写上三行待办事项**  
-   模型应调用 `write_file`。
-
-4. **记住：我叫小康，喜欢简洁的中文回答**  
-   模型应调用 `memory_write`。之后新对话里也应能用到这条记忆。
-
-5. **抓取 https://example.com 的页面摘要**  
-   模型应调用 `fetch_url`。
-
-6. **（先点回形针上传一个 txt）请读一下我刚上传的文件**  
-   模型应调用 `read_file`，路径形如 `uploads/foo.txt`。
+1. **帮我搜一下 xAI Grok API 怎么做 function calling** — `web_search`
+2. **读一下 workspace 里的 sample.txt** — `read_file`
+3. **在 workspace 里写一个 notes.txt，写上三行待办事项** — `write_file`
+4. **记住：我叫小康，喜欢简洁的中文回答** — `memory_write`
+5. **抓取 https://example.com 的页面摘要** — `fetch_url`
+6. **用浏览器打开 https://example.com，做一次 snapshot，然后总结页面** — `browser_open` + `browser_snapshot`
+7. **生成一张水墨风格的熊猫坐在竹林里的图片** — `generate_image`
+8. **用子助手去搜索 Playwright 官方安装步骤，并写进 workspace/playwright-notes.txt** — `delegate_task`
+9. **（先上传一张 png/jpg/webp）看看这张图里有什么** — 视觉
+10. **例程**：在「例程」里加 `0 9 * * *` + 「用 web_search 总结今天的 AI 要闻，写进 workspace/daily.md」
 
 ## 运行测试
 
@@ -129,35 +147,37 @@ source venv/bin/activate
 pytest
 ```
 
-测试覆盖：路径穿越拦截、`write_file`/`read_file` 往返、危险命令拦截、`fetch_url` 拒绝 localhost / 内网、上传保存路径必须落在 `workspace/uploads/`、拒绝 `../` 文件名。
+覆盖：路径穿越、危险命令硬拦截、中风险分类、`fetch_url` / 浏览器 URL 封锁、上传路径、cron 解析、子助手不能递归、设置接口不泄露密钥、MCP 示例配置可干净加载。
 
 ## 项目结构
 
 ```
 grok-assistant/
   README.md
-  start.sh             # 一键启动（推荐）
+  start.sh
+  mcp.example.json     # 可解析的 MCP 示例（默认不启用）
   requirements.txt
-  pytest.ini
-  .env.example
-  .gitignore
-  app/__main__.py      # python -m app
-  app/main.py          # FastAPI：页面 + 会话 API + 上传 + /api/chat + SSE
-  app/agent.py         # Grok 工具循环
-  app/tools.py         # 搜索 / 文件 / 命令 / 抓取网页 / 上传
-  app/memory.py        # 持久记忆
-  app/sessions.py      # 多会话落盘
+  app/main.py          # FastAPI：会话 / 上传 / SSE / 设置 / 例程 / 批准
+  app/agent.py         # 工具循环、子助手、批准等待
+  app/tools.py         # 沙箱工具 + 动态 schema
+  app/settings.py      # data/settings.json（每请求重读）
+  app/approvals.py     # 中风险命令批准
+  app/browser.py       # Playwright
+  app/mcp_client.py    # stdio JSON-RPC MCP 客户端
+  app/mcp_echo.py      # 示例 echo 服务器
+  app/routines.py      # Asia/Shanghai cron
+  app/images.py        # 图像生成
   app/static/index.html
-  tests/test_tools.py
-  workspace/sample.txt # 演示用中文文本
-  workspace/uploads/   # 用户上传（已 gitignore）
-  data/                # 运行时创建（已 gitignore）
+  tests/
+  workspace/
+  data/                # gitignore
 ```
 
 ## 常见问题
 
-- **未配置 XAI_API_KEY**：服务能启动，但发消息会返回明确错误。按上面步骤配置 `.env` 后重启。
-- **鉴权失败 / 模型不存在**：检查 key 是否有效，或把 `GROK_MODEL` 改成控制台里可用的模型。
-- **搜索为空**：DuckDuckGo 偶发限流，可换关键词重试。
-- **data/ 目录**：首次启动或首次写记忆/会话时自动创建，无需手工建目录。
-- **上传失败**：确认文件名不含 `../`，体积不超过约 5MB；二进制除 pdf/png/jpg 外会被拒绝。
+- **未配置密钥**：服务能启动。打开「设置」填写后立即生效，不必重启。
+- **鉴权失败 / 模型不存在**：检查 key，或把模型改成控制台里可用的 id。
+- **Playwright 失败**：执行 `python -m playwright install chromium`。
+- **MCP 连不上**：设置面板会显示错误；`enabled: false` 时必须干净（无工具、无异常）。
+- **图像生成失败**：确认账号开通了 Imagine / `images/generations`；默认模型 `grok-imagine-image-2.0`。
+- **不要提交** `.env` 或 `data/`（含密钥、会话、例程）。

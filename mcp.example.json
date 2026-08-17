@@ -1,0 +1,11 @@
+{
+  "servers": [
+    {
+      "name": "echo",
+      "command": "python3",
+      "args": ["-m", "app.mcp_echo"],
+      "enabled": false,
+      "note": "内置回声示例。把 enabled 改为 true 后会提供 mcp_echo_echo 工具。即使服务器未运行，本文件也应能被干净解析。"
+    }
+  ]
+}

@@ -8,6 +8,7 @@ does not isolate the process, network, or host filesystem.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -38,7 +39,13 @@ CMD_TIMEOUT_SEC = 15
 SEARCH_RESULTS = 5
 FETCH_TIMEOUT_SEC = 20
 UPLOADS_DIRNAME = "uploads"
-BLOB_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
+BLOB_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
+IMAGE_EXTS = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
 
 # Whole-command scans. Not exhaustive — local-dev only.
 _DANGEROUS = [
@@ -268,6 +275,56 @@ def _is_dangerous(command: str) -> str | None:
         if pat.search(command):
             return "命令被拦截：包含危险模式（如 sudo / rm -rf / / mkfs）。这是本地开发沙箱，不是安全隔离。"
     return None
+
+
+_MEDIUM = [
+    re.compile(p, re.IGNORECASE)
+    for p in [
+        r"\brm\b",
+        r"\bchmod\b",
+        r"\bchown\b",
+        r"\b(curl|wget)\b.+\|\s*(ba)?sh\b",
+        r"\b(curl|wget)\b.+\|\s*python",
+        r"\btee\b",
+        r"(^|[;&|]\s*)dd\b",
+    ]
+]
+
+
+def _outside_workspace_write(command: str) -> bool:
+    """True if the command looks like it writes outside workspace files."""
+    pattern = re.compile(r"(>>?|tee(?:\s+-a)?)\s+(\S+)")
+    for m in pattern.finditer(command or ""):
+        dest = m.group(2).strip().strip("\"'")
+        if not dest:
+            continue
+        if dest.startswith("/dev/"):
+            continue
+        if dest.startswith("/") or dest.startswith("~") or dest.startswith(".."):
+            return True
+        try:
+            raw = Path(dest)
+            if raw.is_absolute():
+                return True
+        except Exception:
+            return True
+    return False
+
+
+def classify_command(command: str) -> tuple[str, str]:
+    """Classify a shell command: ('deny'|'approve'|'ok', reason)."""
+    command = (command or "").strip()
+    if not command:
+        return "ok", ""
+    blocked = _is_dangerous(command)
+    if blocked:
+        return "deny", blocked
+    if _outside_workspace_write(command):
+        return "approve", "命令可能写入 workspace 以外的路径，需要确认。"
+    for pat in _MEDIUM:
+        if pat.search(command):
+            return "approve", "中风险命令（如 rm / chmod / 管道执行），需要确认后才会运行。"
+    return "ok", ""
 
 
 def run_command(command: str) -> str:
@@ -544,7 +601,8 @@ def _host_is_forbidden(host: str) -> bool:
     return False
 
 
-def _validate_public_http_url(url: str) -> str | None:
+def validate_public_http_url(url: str, *, allow_private: bool = False) -> str | None:
+    """Return an error string if the URL is blocked, else None."""
     url = (url or "").strip()
     if not url:
         return "url 不能为空"
@@ -559,9 +617,13 @@ def _validate_public_http_url(url: str) -> str | None:
     host = parsed.hostname
     if not host:
         return "URL 缺少主机名"
-    if _host_is_forbidden(host):
+    if not allow_private and _host_is_forbidden(host):
         return "拒绝访问本地或私有地址"
     return None
+
+
+def _validate_public_http_url(url: str) -> str | None:
+    return validate_public_http_url(url, allow_private=False)
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -705,6 +767,31 @@ def memory_write(fact: str) -> str:
 
 def memory_read(query: str = "") -> str:
     return _memory_read(query or "")
+
+
+# ---------------------------------------------------------------------------
+# vision helper
+# ---------------------------------------------------------------------------
+
+def file_to_data_url(rel_path: str) -> str | None:
+    """Encode a workspace image as a data URL for the vision API."""
+    try:
+        target = resolve_workspace_path(rel_path)
+    except (ValueError, PermissionError):
+        return None
+    if not target.is_file():
+        return None
+    mime = IMAGE_EXTS.get(target.suffix.lower())
+    if not mime:
+        return None
+    try:
+        raw = target.read_bytes()
+    except OSError:
+        return None
+    if not raw or len(raw) > MAX_UPLOAD_BYTES:
+        return None
+    b64 = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{b64}"
 
 
 # ---------------------------------------------------------------------------
@@ -883,6 +970,116 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+
+_EXTRA_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_open",
+            "description": (
+                "用内置 Chromium 打开一个公开 http(s) 网页。"
+                "默认拒绝 localhost / 内网 / file://。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要打开的 http(s) URL"}
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_snapshot",
+            "description": "读取当前页面的可交互元素快照，带 ref（如 e1）供 click/type 使用。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_click",
+            "description": "点击页面元素。优先用 snapshot 返回的 ref（如 e1），也可以是 CSS 选择器。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ref_or_selector": {
+                        "type": "string",
+                        "description": "snapshot 的 ref 或 CSS 选择器",
+                    }
+                },
+                "required": ["ref_or_selector"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_type",
+            "description": "向输入框输入文本。ref 来自 browser_snapshot。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ref_or_selector": {
+                        "type": "string",
+                        "description": "snapshot 的 ref 或 CSS 选择器",
+                    },
+                    "text": {"type": "string", "description": "要输入的文本"},
+                },
+                "required": ["ref_or_selector", "text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser_screenshot",
+            "description": "对当前页面截图，保存到 workspace/screenshots/。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": (
+                "根据文字提示用 xAI 图像接口生成一张图片，"
+                "保存到 workspace/generated/ 并返回可在对话中展示的路径。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "图像描述（英文或中文）"}
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_task",
+            "description": (
+                "把一个子任务交给子助手独立完成（最多 5 轮工具）。"
+                "适合可以并行或拆开的搜索/整理任务。子助手不能再委派。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string", "description": "子助手要完成的目标"},
+                    "context": {
+                        "type": "string",
+                        "description": "可选背景信息",
+                    },
+                },
+                "required": ["goal"],
+            },
+        },
+    },
+]
+
 _DISPATCH: dict[str, Callable[..., str]] = {
     "web_search": web_search,
     "read_file": read_file,
@@ -903,7 +1100,67 @@ TOOL_LABELS = {
     "fetch_url": "抓取网页",
     "memory_write": "写入记忆",
     "memory_read": "读取记忆",
+    "browser_open": "浏览器 · 打开",
+    "browser_snapshot": "浏览器 · 快照",
+    "browser_click": "浏览器 · 点击",
+    "browser_type": "浏览器 · 输入",
+    "browser_screenshot": "浏览器 · 截图",
+    "generate_image": "生成图片",
+    "delegate_task": "子助手",
 }
+
+
+def _lazy_dispatch(name: str) -> Callable[..., str] | None:
+    if name in _DISPATCH:
+        return _DISPATCH[name]
+    if name == "generate_image":
+        from app.images import generate_image as _gi
+
+        return _gi
+    if name.startswith("browser_"):
+        from app import browser as _br
+
+        return {
+            "browser_open": _br.browser_open,
+            "browser_snapshot": _br.browser_snapshot,
+            "browser_click": _br.browser_click,
+            "browser_type": _br.browser_type,
+            "browser_screenshot": _br.browser_screenshot,
+        }.get(name)
+    if name.startswith("mcp_"):
+        from app.mcp_client import mcp_call
+
+        def _mcp(**kwargs: Any) -> str:
+            return mcp_call(name, kwargs)
+
+        return _mcp
+    return None
+
+
+def get_tool_schemas(*, allow_delegate: bool = True) -> list[dict[str, Any]]:
+    """All model-facing tools, including MCP (loaded from data/mcp.json)."""
+    tools = list(TOOLS)
+    for schema in _EXTRA_SCHEMAS:
+        fname = schema["function"]["name"]
+        if fname == "delegate_task" and not allow_delegate:
+            continue
+        tools.append(schema)
+    try:
+        from app.mcp_client import mcp_tool_schemas
+
+        tools.extend(mcp_tool_schemas())
+    except Exception:
+        pass
+    return tools
+
+
+def tool_label(name: str) -> str:
+    if name in TOOL_LABELS:
+        return TOOL_LABELS[name]
+    if name.startswith("mcp_"):
+        rest = name[4:]
+        return "MCP · " + rest.replace("_", " / ", 1)
+    return name
 
 
 def summarize_args(name: str, args: dict[str, Any]) -> str:
@@ -913,8 +1170,14 @@ def summarize_args(name: str, args: dict[str, Any]) -> str:
         return str(args.get("path") or "")[:120]
     if name == "run_command":
         return str(args.get("command") or "")[:120]
-    if name == "fetch_url":
+    if name in ("fetch_url", "browser_open"):
         return str(args.get("url") or "")[:120]
+    if name in ("browser_click", "browser_type"):
+        return str(args.get("ref_or_selector") or "")[:120]
+    if name == "generate_image":
+        return str(args.get("prompt") or "")[:120]
+    if name == "delegate_task":
+        return str(args.get("goal") or "")[:120]
     if name == "memory_write":
         return str(args.get("fact") or "")[:120]
     if name == "memory_read":
@@ -956,7 +1219,34 @@ def summarize_result(name: str, raw: str) -> str:
     if name == "memory_read":
         n = len(data.get("facts") or [])
         return f"返回 {n} 条记忆"
+    if name == "browser_open":
+        return f"已打开 {data.get('title') or data.get('url') or ''}"
+    if name == "browser_snapshot":
+        n = len(data.get("items") or [])
+        return f"快照 {n} 个元素"
+    if name == "browser_click":
+        return f"已点击 {data.get('selector', '')}"
+    if name == "browser_type":
+        return "已输入文本"
+    if name in ("browser_screenshot", "generate_image"):
+        return f"已保存 {data.get('path', '')}"
+    if name == "delegate_task":
+        return (data.get("reply") or data.get("summary") or "子助手已完成")[:80]
+    if name.startswith("mcp_"):
+        return "MCP 调用完成"
     return "完成"
+
+
+def _media_from_result(name: str, raw: str) -> str | None:
+    if name not in ("generate_image", "browser_screenshot"):
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, dict) and data.get("url"):
+        return str(data["url"])
+    return None
 
 
 def execute_tool(name: str, arguments_json: str) -> tuple[str, dict[str, Any]]:
@@ -969,19 +1259,19 @@ def execute_tool(name: str, arguments_json: str) -> tuple[str, dict[str, Any]]:
         err = json.dumps({"error": f"参数解析失败: {exc}"}, ensure_ascii=False)
         return err, {
             "name": name,
-            "label": TOOL_LABELS.get(name, name),
+            "label": tool_label(name),
             "args_summary": arguments_json[:120],
             "ok": False,
             "summary": f"参数错误：{exc}",
         }
 
-    fn = _DISPATCH.get(name)
+    fn = _lazy_dispatch(name)
     args_summary = summarize_args(name, args)
     if fn is None:
         err = json.dumps({"error": f"未知工具: {name}"}, ensure_ascii=False)
         return err, {
             "name": name,
-            "label": name,
+            "label": tool_label(name),
             "args_summary": args_summary,
             "ok": False,
             "summary": f"未知工具: {name}",
@@ -1005,9 +1295,12 @@ def execute_tool(name: str, arguments_json: str) -> tuple[str, dict[str, Any]]:
 
     ui = {
         "name": name,
-        "label": TOOL_LABELS.get(name, name),
+        "label": tool_label(name),
         "args_summary": args_summary,
         "ok": ok,
         "summary": summarize_result(name, result),
     }
+    media = _media_from_result(name, result)
+    if media:
+        ui["image_url"] = media
     return result, ui
