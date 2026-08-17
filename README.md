@@ -2,7 +2,7 @@
 
 一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.4.0 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
 
-**对外使用**：右侧只选 **GPT / Claude / Grok** 和一个模型。对话默认走后台中转站（CCAPI），**不展示价格**、不展示 xAI / OpenAI / Anthropic / 中转站 Tab、不展示基址。
+**对外 = 右侧 GPT / Claude / Grok，后台中转站，不展示价格。** 对话一律走 CCAPI；右侧不出现 xAI / OpenAI / Anthropic / 中转站页签，也不显示基址或价格。
 
 - 后端：FastAPI；默认全部聊天经 CCAPI 中转（`https://api.ccapi.ai/v1`，设置可改）。高级直连仍可走 xAI / OpenAI / Anthropic，但默认 UI 不会切到这三家。
 - 前端：单页中文深色聊天界面（左侧多会话，右侧 GPT / Claude / Grok 模型轨，设置 / 例程抽屉）
@@ -12,20 +12,28 @@
 
 ## 对外模型轨与后台中转站
 
-普通用户只在右侧选 **GPT / Claude / Grok** 和一个模型（顶栏徽章显示友好名，例如 `GPT-5.6`）。**不展示价格**，也不展示 xAI / OpenAI / Anthropic /「中转站」Tab 或基址。
+普通用户只在右侧选 **GPT / Claude / Grok** 和一个模型（顶栏徽章显示友好名，例如 `GPT-5.6 Terra`）。**不展示价格**，也不展示 xAI / OpenAI / Anthropic /「中转站」Tab 或基址。
 
 所有默认对话走 **CCAPI 中转**（`provider=ccapi`，基址默认 `https://api.ccapi.ai/v1`，设置可覆盖）。管理员在设置里粘贴一枚中转站密钥（`CCAPI_API_KEY` / `ccapi_api_key`）。端用户只选家族 + 模型。
 
-`GET /api/models` 在已配置密钥时请求 `{base}/models`，按家族分组（GPT / Claude / Grok）；其它家族（DeepSeek / Gemini 等）不出现在三个 Tab。拉取失败或未配置密钥时使用无价格的本地回退列表。响应不含 `price` / `pricing` / `cost` / `fee`。
+`GET /api/models` 在已配置密钥时请求 `{base}/models`（8 秒超时），把 id 合并进 GPT / Claude / Grok；Gemini / Kimi / 图像 / 视频不出现。拉取失败或未配置密钥时使用无价格的本地回退列表。响应形如 `{ok, source: live|fallback, families, provider: ccapi, model, family, has_relay_key}`，不含 `price` / `pricing` / `cost` / `fee`。
 
-`PUT /api/model` 传 `{family, model}` 时写入 `provider=ccapi` + 该模型 id。新安装默认：ccapi + 第一个 GPT 模型（`gpt-5.6`）。
+回退目录（聊天家族，来自 [CCAPI 价格页](https://ccapi.us/pricing/)）：
 
-设置抽屉默认只露出管理员/中转站密钥和可选基址。xAI / OpenAI / Anthropic 直连密钥收在「高级 / 直连」里；若 `data/settings.json` 里已经保存了这三家之一，旧路径仍可用，但默认 UI 不会再切过去。
+| 家族 | 模型 id |
+|------|---------|
+| **GPT** | `gpt-5-mini`、`gpt-5.1`、`gpt-5.2`、`gpt-5.3-codex`、`gpt-5.4`、`gpt-5.4-mini`、`gpt-5.4-nano`、`gpt-5.5`、`gpt-5.6-luna`、`gpt-5.6-sol`、`gpt-5.6-terra`（默认） |
+| **Claude** | `claude-haiku-4-5-20251001`、`claude-opus-4-6` 及 high/low/max/medium/thinking、`claude-opus-4-7` 及变体、`claude-opus-4-8` 及变体、`claude-opus-5`、`claude-sonnet-4-6`、`claude-sonnet-5`、`cursor-opus-4-8` |
+| **Grok** | `grok-4.5` |
+
+`PUT /api/model` 传 `{family, model}` 时写入 `provider=ccapi` + 该模型 id。新安装默认：ccapi + `gpt-5.6-terra`（价格页没有裸的 `gpt-5.6`）。
+
+设置抽屉默认只露出中转站密钥和可选基址。xAI / OpenAI / Anthropic 直连密钥收在「高级直连」里；若 `data/settings.json` 里已经保存了这三家之一，旧路径仍可用，但默认 UI 不会再切过去。
 
 密钥写在 gitignored 的 `data/settings.json`。环境变量 `CCAPI_API_KEY` 作为回退。界面**永不回显**密钥。
 
-1. **管理员必须做的**：到 CCAPI 控制台复制 token，在设置里填「管理员/中转站密钥」，或写入 `.env` 的 `CCAPI_API_KEY`。地址默认 `https://api.ccapi.ai/v1`。
-2. 高级直连（可选）：[xAI](https://console.x.ai) / [OpenAI](https://platform.openai.com) / [Anthropic](https://console.anthropic.com) 密钥在设置的「高级 / 直连」里。
+1. **管理员必须做的**：到 CCAPI 控制台复制 token，在设置里填「中转站密钥」，或写入 `.env` 的 `CCAPI_API_KEY`。地址默认 `https://api.ccapi.ai/v1`。
+2. 高级直连（可选）：[xAI](https://console.x.ai) / [OpenAI](https://platform.openai.com) / [Anthropic](https://console.anthropic.com) 密钥在设置的「高级直连」里。
 3. **无需重启**：保存设置后立即生效。
 
 ```bash
@@ -37,7 +45,7 @@ cp .env.example .env
 # ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-未配置中转站密钥时，聊天接口返回 **503**。界面给管理员一行说明：设置里填写中转站密钥；普通用户看不到三家官方 Key 表单作为主路径。
+未配置中转站密钥时，聊天接口返回 **503**。界面只显示一行：管理员尚未配置中转站密钥（设置里填写）。
 
 图像生成：默认走中转站同一基址的 `/images/generations`。失败或未配置时，若已保存 xAI 密钥则回退 xAI（默认 `grok-imagine-image-2.0`）。
 
@@ -187,7 +195,7 @@ grok-assistant/
   app/auth.py          # 可选访问口令与 CORS
   app/agent.py         # 工具循环、子助手、批准等待（xAI/OpenAI）
   app/anthropic_agent.py # Anthropic Messages 工具循环
-  app/providers.py     # 提供商目录与消息转换
+  app/providers.py     # GPT/Claude/Grok 家族目录与消息转换
   app/tools.py         # 沙箱工具 + 动态 schema
   app/settings.py      # data/settings.json（每请求重读，含中转站密钥与基址）
   app/approvals.py     # 中风险命令批准
@@ -230,7 +238,7 @@ grok-assistant/
 
 ## 常见问题
 
-- **未配置中转站密钥**：服务能启动，右侧仍显示 GPT / Claude / Grok 回退列表。打开「设置」填写管理员/中转站密钥后立即生效，不必重启。界面不会把价格或三家官方 Key 表单当作主路径。
+- **未配置中转站密钥**：服务能启动，右侧仍显示 GPT / Claude / Grok 回退列表。打开「设置」填写中转站密钥后立即生效，不必重启。界面不会把价格或三家官方 Key 表单当作主路径。
 - **鉴权失败 / 模型不存在**：检查 key，或把模型改成控制台里可用的 id。
 - **Playwright 失败**：执行 `python -m playwright install chromium`。
 - **MCP 连不上**：设置面板会显示错误；`enabled: false` 时必须干净（无工具、无异常）。

@@ -874,14 +874,14 @@
           </div>
         </div>
         <div class="header-actions">
-          <span class="model-pill" id="modelPill" title="选择模型" data-i18n-title="model.selectTitle">GPT-5.6</span>
+          <span class="model-pill" id="modelPill" title="选择模型" data-i18n-title="model.selectTitle">GPT-5.6 Terra</span>
           <button class="ghost" id="modelBtn" type="button" data-i18n="model">模型</button>
           <button class="ghost" id="routinesBtn" type="button" data-i18n="routines">例程</button>
           <button class="ghost lang-toggle" id="langToggle" type="button" title="EN">EN</button>
           <button class="ghost" id="settingsBtn" type="button" data-i18n="settings">设置</button>
         </div>
       </header>
-      <div class="warn-key" id="keyWarn" data-i18n="keyWarn">管理员尚未配置中转站密钥（设置里填写），普通用户看不到三家官方 Key 表单作为主路径。</div>
+      <div class="warn-key" id="keyWarn" data-i18n="keyWarn">管理员尚未配置中转站密钥（设置里填写）</div>
       <div id="thread"></div>
       <div class="composer-wrap">
         <div class="upload-chips" id="uploadChips" hidden></div>
@@ -936,12 +936,12 @@
         </div>
       </div>
       <div class="field">
-        <label data-i18n="settings.ccapiKey">管理员/中转站密钥</label>
+        <label data-i18n="settings.ccapiKey">中转站密钥</label>
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
           <span class="key-dot" id="keyDotCcapi"></span><span id="keyStatusCcapi">未保存密钥</span>
         </div>
         <input type="password" id="keyInputCcapi" placeholder="已保存则留空不修改" data-i18n-placeholder="settings.keyPlaceholder" autocomplete="off" />
-        <div class="hint" data-i18n="settings.ccapiHint">后台中转站 token。环境变量 CCAPI_API_KEY 也可作为回退。界面永不回显。普通用户只在右侧选 GPT / Claude / Grok。</div>
+        <div class="hint" data-i18n="settings.ccapiHint">OpenAI 兼容中转。到 https://ccapi.us/pricing/ 或控制台申请 token。环境变量 CCAPI_API_KEY 也可作为回退。界面永不回显。</div>
       </div>
       <div class="field">
         <label data-i18n="settings.ccapiBase">中转站地址</label>
@@ -953,8 +953,8 @@
         <div class="hint" data-i18n="settings.ccapiBaseHint">默认 https://api.ccapi.ai/v1。也可填 https://api.ccapi.us/v1 或其它兼容基址。</div>
       </div>
       <details class="advanced-direct" id="advancedDirect">
-        <summary data-i18n="settings.advanced">高级 / 直连</summary>
-        <p class="hint" data-i18n="settings.advancedHint">仅管理员调试用。默认对话走中转站，不会把这三家官方密钥暴露给普通用户。</p>
+        <summary data-i18n="settings.advanced">高级直连</summary>
+        <p class="hint" data-i18n="settings.advancedHint">仅调试用。默认对话走中转站；这三家官方密钥不是对外主路径。</p>
       <div class="field">
         <label data-i18n="settings.xaiKey">xAI API Key</label>
         <div style="margin-bottom:8px;font-size:12px;color:var(--muted)">
@@ -982,7 +982,7 @@
       </details>
       <div class="field">
         <label data-i18n="settings.model">当前对话模型</label>
-        <input type="text" id="modelInput" placeholder="grok-4.6" />
+        <input type="text" id="modelInput" placeholder="gpt-5.6-terra" />
         <div class="hint" data-i18n="settings.modelHint">也可在右侧「模型」面板点选。切换后对下一条消息生效。</div>
       </div>
       <div class="field">
@@ -1146,7 +1146,7 @@
     const backdrop = document.getElementById("backdrop");
     let busy = false;
     let sessionId = null;
-    let catalog = { families: { gpt: [], claude: [], grok: [] }, family: "gpt", provider: "ccapi", model: "gpt-5.6", has_relay_key: false, source: "fallback" };
+    let catalog = { families: { gpt: [], claude: [], grok: [] }, family: "gpt", provider: "ccapi", model: "gpt-5.6-terra", has_relay_key: false, source: "fallback" };
     let activeFamily = "gpt";
     const FAMILY_IDS = ["gpt", "claude", "grok"];
 
@@ -1579,21 +1579,46 @@
     function familyOfId(id) {
       const raw = String(id || "").toLowerCase();
       const leaf = raw.split("/").pop() || raw;
-      if (raw.indexOf("claude") >= 0) return "claude";
-      if (raw.indexOf("grok") >= 0) return "grok";
+      if (raw.indexOf("gemini") >= 0 || raw.indexOf("kimi") >= 0 || raw.indexOf("image") >= 0 || raw.indexOf("imagine") >= 0 || raw.indexOf("video") >= 0 || raw.indexOf("sora") >= 0) return "";
       if (raw.indexOf("gpt") >= 0 || raw.indexOf("chatgpt") >= 0) return "gpt";
       if (leaf.indexOf("o1") === 0 || leaf.indexOf("o3") === 0 || leaf.indexOf("o4") === 0) return "gpt";
+      if (raw.indexOf("claude") >= 0 || leaf.indexOf("cursor-opus") === 0) return "claude";
+      if (raw.indexOf("grok") >= 0) return "grok";
       return "";
     }
     function prettyLabel(id) {
       const leaf = String(id || "").split("/").pop() || String(id || "");
       const low = leaf.toLowerCase();
-      const brands = [["chatgpt","ChatGPT"],["gpt","GPT"],["claude","Claude"],["grok","Grok"]];
+      const brands = [["chatgpt","ChatGPT"],["cursor-opus","Cursor Opus"],["gpt","GPT"],["claude","Claude"],["grok","Grok"]];
+      let brand = null;
+      let rest = leaf;
       for (let i = 0; i < brands.length; i++) {
         if (low === brands[i][0]) return brands[i][1];
-        if (low.indexOf(brands[i][0]) === 0) return brands[i][1] + leaf.slice(brands[i][0].length);
+        if (low.indexOf(brands[i][0]) === 0) {
+          brand = brands[i][1];
+          rest = leaf.slice(brands[i][0].length).replace(/^[-_]+/, "");
+          break;
+        }
       }
-      return leaf;
+      if (!brand) {
+        if (low.indexOf("o1") === 0 || low.indexOf("o3") === 0 || low.indexOf("o4") === 0) {
+          const head = leaf.split("-")[0];
+          brand = head.charAt(0).toUpperCase() + head.slice(1);
+          rest = leaf.slice(head.length).replace(/^[-_]+/, "");
+        } else {
+          return leaf;
+        }
+      }
+      if (!rest) return brand;
+      const chunks = [brand];
+      rest.split("-").filter(Boolean).forEach(function (part) {
+        if (/\d/.test(part) && !/[a-zA-Z]/.test(part)) {
+          chunks[chunks.length - 1] = chunks[chunks.length - 1] + "-" + part;
+        } else {
+          chunks.push(part.charAt(0).toUpperCase() + part.slice(1));
+        }
+      });
+      return chunks.join(" ");
     }
     function familiesFrom(data) {
       const raw = (data && data.families) || catalog.families || {};
@@ -1638,7 +1663,7 @@
     function syncRail(data) {
       const keys = keysFrom(data);
       const provider = currentProvider(data);
-      const model = (data && data.model) || catalog.model || "gpt-5.6";
+      const model = (data && data.model) || catalog.model || "gpt-5.6-terra";
       const families = familiesFrom(data);
       const family = (data && data.family) || familyOfId(model) || activeFamily || "gpt";
       const hasRelay = currentHasKey(data);
@@ -1772,7 +1797,7 @@
     async function loadSettingsPanel() {
       const res = await fetch("/api/settings");
       const data = await res.json();
-      document.getElementById("modelInput").value = data.model || "gpt-5.6";
+      document.getElementById("modelInput").value = data.model || "gpt-5.6-terra";
       document.getElementById("imageModelInput").value = data.image_model || "grok-imagine-image-2.0";
       document.getElementById("localBrowser").checked = !!data.allow_local_browser;
       document.getElementById("keyInputXai").value = "";
@@ -1939,7 +1964,11 @@
         syncRail(catalog);
         return;
       }
-      const next = rows[0] && rows[0].id;
+      let next = rows[0] && rows[0].id;
+      if (family === "gpt") {
+        const terra = rows.find(function (row) { return row.id === "gpt-5.6-terra"; });
+        if (terra) next = terra.id;
+      }
       if (next) selectModel(family, next);
       else syncRail(catalog);
     });

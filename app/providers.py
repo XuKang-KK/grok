@@ -189,6 +189,13 @@ FALLBACK_MODEL_IDS = (
 )
 
 _PRICE_KEYS = frozenset({"price", "pricing", "cost", "fee"})
+_PRICE_SUFFIXES = ("_price", "_pricing", "_cost", "_fee")
+
+
+def _is_price_key(key: str) -> bool:
+    """Exact price/cost/fee keys, or those suffixes. Never match 'feedback'."""
+    low = str(key).lower()
+    return low in _PRICE_KEYS or low.endswith(_PRICE_SUFFIXES)
 
 
 def family_for_model(model_id: str | None) -> str | None:
@@ -272,7 +279,7 @@ def strip_price_fields(obj: Any) -> Any:
     if isinstance(obj, dict):
         out: dict[str, Any] = {}
         for key, value in obj.items():
-            if str(key).lower() in _PRICE_KEYS:
+            if _is_price_key(key):
                 continue
             out[key] = strip_price_fields(value)
         return out
