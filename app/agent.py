@@ -444,6 +444,15 @@ def _openai_compatible_turn(
             }
             return
 
+        usage_tokens = 0
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            from app.quota import tokens_from_usage
+
+            usage_tokens = tokens_from_usage(usage)
+        if usage_tokens:
+            yield {"type": "usage", "tokens": usage_tokens}
+
         choice = resp.choices[0]
         message = choice.message
         tool_calls = message.tool_calls or []

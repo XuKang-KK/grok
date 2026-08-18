@@ -1,6 +1,6 @@
-# KK AI助手（本地 v1.5.1）
+# KK AI助手（本地 v1.5.2）
 
-一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.5.1 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
+一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.5.2 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
 
 **对外 = 右侧 GPT / Claude / Grok / Gemini，后台中转站，不展示价格。** 对话一律走 CCAPI；右侧不出现 xAI / OpenAI / Anthropic / 中转站页签，也不显示基址或价格。
 
@@ -220,24 +220,29 @@ grok-assistant/
 
 ## 对外安全（KK_PUBLIC）
 
-把本机助手开到公网时，设 `KK_PUBLIC=1`（或 `PUBLIC_MODE=1`，或在 `data/settings.json` 写 `"public_mode": true`）。本地开发默认不要开。
+公网部署设 `KK_PUBLIC=1`（或 `PUBLIC_MODE=1`）。**任一来源为真即对外**：环境变量或 `settings.json` 的 `public_mode`。环境变量为真时，`settings.json` 的 `public_mode: false` **关不掉**对外模式（fail-secure）。本地开发默认不要开。
 
 - 访客可以聊天、选模型、管理**自己的**会话；不能列出别人的对话，也不能改密钥。
 - 工具只剩 `web_search` / `fetch_url` / `generate_image`。shell、文件、记忆、浏览器、MCP、例程调度都关掉。
-- 必须另设 `KK_ACCESS_TOKEN` 作为管理员口令，才能改密钥 / MCP / 例程。没有口令时这些接口返回 403。
-- 前面加 TLS（Caddy / nginx）。登录 cookie 在 HTTPS 或 `X-Forwarded-Proto: https` 时带 `Secure`。
-- 聊天 20 次 / 10 分钟 / IP，上传与登录各 10 次。可用 `KK_ALLOWED_HOSTS` 限制 Host。
-- `/docs` 在对外模式关闭。健康检查不返回 workspace 路径。
+- 必须另设 `KK_ACCESS_TOKEN` 作为管理员口令。`POST /api/login` 把口令的 sha256 写入 cookie `kk_token`；**哈希不是口令**，用哈希当 Bearer 会被拒绝。
+- 前面加 TLS（Caddy / nginx）。反代后设 `KK_TRUSTED_PROXY=1`，限流取 `X-Forwarded-For` **最右侧** hop。登录 cookie 在 HTTPS 或 `X-Forwarded-Proto: https` 时带 `Secure`。
+- 聊天 / 上传 / 登录按 IP **和** 访客 `kk_vid` 双桶限流（`KK_CHAT_RATE` / `KK_UPLOAD_RATE` / `KK_LOGIN_RATE`）。可用 `KK_ALLOWED_HOSTS` 限制 Host。
+- 对外才执行用量：`KK_VISITOR_TOKEN_LIMIT`（默认 20 万，0=不限）、`KK_GLOBAL_TOKEN_LIMIT`（默认 200 万）、可选 `KK_VISITOR_COST_CENTS` / `KK_GLOBAL_COST_CENTS`。超限 429「用量已达上限」。
+- 封禁：`KK_BANNED_VIDS` 逗号列表，或管理员 `GET/PUT /api/bans`。命中聊天/上传/写会话返回 403「已封禁」。
+- `/docs` 在对外模式关闭。健康检查不返回 workspace 路径。对外启动 `reload=False`。
 
 ```bash
 # .env
 KK_PUBLIC=1
 KK_ACCESS_TOKEN=请换成足够长的随机口令
+KK_TRUSTED_PROXY=1
 HOST=0.0.0.0
-# 建议前面用反代并只暴露 443
+# KK_BANNED_VIDS=
+# KK_VISITOR_TOKEN_LIMIT=200000
+# KK_GLOBAL_TOKEN_LIMIT=2000000
 ```
 
-本模式**不是**完整多租户隔离：CCAPI 花销记在你的账号上；没有 TLS 时口令会明文走网；防火墙与密钥轮换仍要你自己做。
+本模式**不是**完整多租户隔离：没有用户注册体系；`settings.json` 未做磁盘加密；CCAPI 花销记在你的账号上。防火墙与密钥轮换仍要你自己做。
 
 ## 上线前你必须自己做的
 

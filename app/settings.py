@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,9 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 ENV_FILE = PROJECT_ROOT / ".env"
 
 DEFAULT_MODEL = default_model_for(DEFAULT_PROVIDER)
+
+logger = logging.getLogger("kk")
+_PUBLIC_LOCK_WARNED = False
 
 _SECRET_KEYS = frozenset(
     {"xai_api_key", "openai_api_key", "anthropic_api_key", "ccapi_api_key", "access_token"}
@@ -93,7 +97,11 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
         elif key == "allow_local_browser":
             current[key] = bool(value)
         elif key == "public_mode":
-            current[key] = _truthy(value)
+            wanted = _truthy(value)
+            if not wanted and _env_public():
+                # Env lock: do not persist a downgrade that would look like "off".
+                continue
+            current[key] = wanted
         else:
             current[key] = value
     if "model" in updates and updates.get("model") not in (None, ""):
@@ -177,16 +185,37 @@ def get_language() -> str:
     return "en" if raw == "en" else "zh"
 
 
-def is_public_mode() -> bool:
-    """KK_PUBLIC / PUBLIC_MODE / settings.public_mode. Settings override env if present."""
-    data = load_settings()
-    if "public_mode" in data:
-        return _truthy(data.get("public_mode"))
+def _env_public() -> bool:
+    """True if KK_PUBLIC or PUBLIC_MODE is a truthy environment value."""
     for name in ("KK_PUBLIC", "PUBLIC_MODE"):
         raw = os.getenv(name)
-        if raw is not None and str(raw).strip() != "":
-            return _truthy(raw)
+        if raw is not None and str(raw).strip() != "" and _truthy(raw):
+            return True
     return False
+
+
+def _warn_public_env_lock() -> None:
+    global _PUBLIC_LOCK_WARNED
+    if _PUBLIC_LOCK_WARNED:
+        return
+    _PUBLIC_LOCK_WARNED = True
+    logger.warning("对外模式由环境变量锁定，忽略 settings.json 的关闭")
+
+
+def is_public_mode() -> bool:
+    """True if any source is truthy: env KK_PUBLIC, env PUBLIC_MODE, or settings.public_mode.
+
+    Fail-secure: a truthy env wins. settings.json ``public_mode: false`` cannot
+    turn the process off when the environment already enabled public mode.
+    """
+    env_on = _env_public()
+    data = load_settings()
+    settings_on = "public_mode" in data and _truthy(data.get("public_mode"))
+    if env_on:
+        if "public_mode" in data and not _truthy(data.get("public_mode")):
+            _warn_public_env_lock()
+        return True
+    return bool(settings_on)
 
 
 def allow_local_browser() -> bool:

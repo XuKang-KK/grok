@@ -1,5 +1,5 @@
 /* Minimal service worker so Android Chrome / iOS Safari can Add to Home Screen. */
-const CACHE = "kk-ai-v1.5.1";
+const CACHE = "kk-ai-v1.5.2";
 const PRECACHE = [
   "/",
   "/manifest.webmanifest",

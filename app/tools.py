@@ -15,6 +15,7 @@ import re
 import subprocess
 import ipaddress
 import socket
+import time
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
@@ -45,6 +46,17 @@ IMAGE_EXTS = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
+}
+ALLOWED_UPLOAD_EXTS = {
+    ".txt",
+    ".md",
+    ".pdf",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    ".csv",
+    ".json",
 }
 
 # Whole-command scans. Not exhaustive — local-dev only.
@@ -498,6 +510,60 @@ def _unique_upload_path(directory: Path, name: str) -> Path:
     return candidate
 
 
+def _int_env_allow_zero(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _purge_expired_uploads(directory: Path) -> None:
+    ttl = _int_env_allow_zero("KK_UPLOAD_TTL_SEC", 7 * 24 * 3600)
+    if ttl <= 0:
+        return
+    now = time.time()
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        return
+    for item in entries:
+        if not item.is_file():
+            continue
+        try:
+            if now - item.stat().st_mtime > ttl:
+                item.unlink()
+        except OSError:
+            continue
+
+
+def _upload_dir_bytes(directory: Path) -> int:
+    total = 0
+    try:
+        entries = list(directory.rglob("*"))
+    except OSError:
+        return 0
+    for item in entries:
+        if not item.is_file():
+            continue
+        try:
+            total += item.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _upload_total_reject(directory: Path, incoming: int) -> str | None:
+    limit = _int_env_allow_zero("KK_UPLOAD_TOTAL_BYTES", 20_000_000)
+    if limit <= 0:
+        return None
+    if _upload_dir_bytes(directory) + incoming > limit:
+        return json.dumps({"error": "上传总量已达上限"}, ensure_ascii=False)
+    return None
+
+
 def save_upload(filename: str, content: bytes, owner: str = "") -> str:
     """Save an uploaded file into workspace/uploads/. Returns JSON."""
     if content is None:
@@ -520,6 +586,11 @@ def save_upload(filename: str, content: bytes, owner: str = "") -> str:
         return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
     ext = Path(name).suffix.lower()
+    if ext not in ALLOWED_UPLOAD_EXTS:
+        return json.dumps(
+            {"error": "不支持的文件类型"},
+            ensure_ascii=False,
+        )
     if b"\x00" in content and ext not in BLOB_EXTENSIONS:
         return json.dumps(
             {"error": "拒绝保存二进制文件（允许 pdf/png/jpg）"},
@@ -537,6 +608,10 @@ def save_upload(filename: str, content: bytes, owner: str = "") -> str:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         return json.dumps({"error": f"无法创建上传目录: {exc}"}, ensure_ascii=False)
+    _purge_expired_uploads(dest_dir)
+    extra = _upload_total_reject(dest_dir, len(content))
+    if extra:
+        return extra
     uploads_root = (workspace / UPLOADS_DIRNAME).resolve()
     if not dest_dir.is_relative_to(uploads_root) or not dest_dir.is_relative_to(workspace):
         return json.dumps(

@@ -1,7 +1,7 @@
 {
   "name": "kk-ai-assistant",
   "productName": "KK AI助手",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "KK AI desktop wrapper for Windows and Mac",
   "main": "main.js",
   "private": true,

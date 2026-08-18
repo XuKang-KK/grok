@@ -62,6 +62,7 @@ _ADMIN_PREFIXES = (
     "/api/mcp",
     "/api/routines",
     "/api/approvals",
+    "/api/bans",
 )
 
 
@@ -71,20 +72,34 @@ def token_cookie_digest(raw: str) -> str:
 
 
 def tokens_match(provided: str, expected: str) -> bool:
+    """Compare a raw secret to the expected password. Digest is not accepted."""
     if not provided or not expected:
         return False
-    provided_b = provided.encode("utf-8")
-    expected_b = expected.encode("utf-8")
-    raw_ok = hmac.compare_digest(
-        hashlib.sha256(provided_b).digest(),
-        hashlib.sha256(expected_b).digest(),
+    return hmac.compare_digest(
+        hashlib.sha256(provided.encode("utf-8")).digest(),
+        hashlib.sha256(expected.encode("utf-8")).digest(),
     )
-    if raw_ok:
-        return True
+
+
+def cookie_digest_ok(provided: str, expected: str) -> bool:
+    """Cookie value must be token_cookie_digest(expected), not the raw password."""
+    if not provided or not expected:
+        return False
     hashed = token_cookie_digest(expected)
     if len(provided) != len(hashed):
         return False
     return hmac.compare_digest(provided, hashed)
+
+
+def credentials_ok(request, expected: str) -> bool:
+    """Bearer matches the raw password only; cookie kk_token matches the digest only."""
+    if not expected:
+        return False
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        return tokens_match(auth[7:].strip(), expected)
+    cookie = (request.cookies.get(COOKIE_NAME) or "").strip()
+    return cookie_digest_ok(cookie, expected)
 
 
 def extract_token(request: Request) -> str:
@@ -98,7 +113,7 @@ def is_admin(request: Request) -> bool:
     expected = get_access_token()
     if not expected:
         return False
-    return tokens_match(extract_token(request), expected)
+    return credentials_ok(request, expected)
 
 
 def is_public_api(method: str, path: str) -> bool:
@@ -139,19 +154,19 @@ class AccessTokenMiddleware(BaseHTTPMiddleware):
 
         if is_public_mode():
             if _is_admin_path(path):
-                if not expected or not tokens_match(extract_token(request), expected):
+                if not expected or not credentials_ok(request, expected):
                     return _admin_denied(expected)
                 return await call_next(request)
             if _is_visitor_path(method, path) or is_public_api(method, path):
                 return await call_next(request)
             # Unknown /api/* in public mode: require admin
-            if not expected or not tokens_match(extract_token(request), expected):
+            if not expected or not credentials_ok(request, expected):
                 return _admin_denied(expected)
             return await call_next(request)
 
         if not expected or is_public_api(method, path):
             return await call_next(request)
-        if tokens_match(extract_token(request), expected):
+        if credentials_ok(request, expected):
             return await call_next(request)
         return JSONResponse({"detail": "需要访问口令"}, status_code=401)
 

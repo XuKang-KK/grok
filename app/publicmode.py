@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import threading
@@ -128,7 +129,37 @@ def reset_rate_limits() -> None:
         _rate_hits.clear()
 
 
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def trusted_proxy() -> bool:
+    return _env_truthy("KK_TRUSTED_PROXY")
+
+
+def _looks_like_ip(value: str) -> bool:
+    raw = (value or "").strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
+    try:
+        ipaddress.ip_address(raw)
+        return True
+    except ValueError:
+        return False
+
+
 def client_ip(request: Request) -> str:
+    """If KK_TRUSTED_PROXY, use the rightmost X-Forwarded-For hop (proxy-set)."""
+    if trusted_proxy():
+        xff = (request.headers.get("x-forwarded-for") or "").strip()
+        if xff:
+            parts = [part.strip() for part in xff.split(",") if part.strip()]
+            if parts:
+                candidate = parts[-1]
+                if _looks_like_ip(candidate):
+                    if candidate.startswith("[") and candidate.endswith("]"):
+                        return candidate[1:-1]
+                    return candidate
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
@@ -145,26 +176,56 @@ def _allow(bucket: str, key: str, limit: int, window: float) -> bool:
         return True
 
 
+def _rate_limited_response(request: Request, bucket: str) -> JSONResponse:
+    try:
+        from app.audit import write_audit
+
+        write_audit(
+            "rate_limit",
+            vid=get_visitor_id(request) if is_public_mode() else "",
+            path=request.url.path,
+            ip=client_ip(request),
+            detail=bucket,
+        )
+    except Exception:
+        pass
+    return JSONResponse({"detail": "请求过于频繁，请稍后再试"}, status_code=429)
+
+
 def check_rate_limit(request: Request) -> Response | None:
     if not is_public_mode():
         return None
     method = request.method.upper()
     path = request.url.path
     ip = client_ip(request)
+    vid = get_visitor_id(request) or "unknown"
     window = float(_int_env("KK_CHAT_WINDOW_SEC", 600))
     if method == "POST" and path in {"/api/chat", "/api/chat/stream"}:
         limit = _int_env("KK_CHAT_RATE", 20)
-        if not _allow("chat", ip, limit, window):
-            return JSONResponse({"detail": "请求过于频繁，请稍后再试"}, status_code=429)
+        ip_ok = _allow("chat-ip", ip, limit, window)
+        vid_ok = _allow("chat-vid", vid, limit, window)
+        if not ip_ok or not vid_ok:
+            return _rate_limited_response(request, "chat")
     elif method == "POST" and path == "/api/upload":
         limit = _int_env("KK_UPLOAD_RATE", 10)
-        if not _allow("upload", ip, limit, window):
-            return JSONResponse({"detail": "请求过于频繁，请稍后再试"}, status_code=429)
+        ip_ok = _allow("upload-ip", ip, limit, window)
+        vid_ok = _allow("upload-vid", vid, limit, window)
+        if not ip_ok or not vid_ok:
+            return _rate_limited_response(request, "upload")
     elif method == "POST" and path == "/api/login":
         limit = _int_env("KK_LOGIN_RATE", 10)
-        if not _allow("login", ip, limit, window):
-            return JSONResponse({"detail": "请求过于频繁，请稍后再试"}, status_code=429)
+        ip_ok = _allow("login-ip", ip, limit, window)
+        vid_ok = _allow("login-vid", vid, limit, window)
+        if not ip_ok or not vid_ok:
+            return _rate_limited_response(request, "login")
     return None
+
+
+CSP_HEADER = (
+    "default-src 'self'; img-src 'self' data: blob:; "
+    "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+    "connect-src 'self'"
+)
 
 
 def apply_security_headers(request: Request, response: Response) -> None:
@@ -172,6 +233,11 @@ def apply_security_headers(request: Request, response: Response) -> None:
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = CSP_HEADER
+    if cookie_should_be_secure(request):
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
     path = request.url.path
     if path.startswith("/api/") and not path.startswith("/api/media"):
         response.headers["Cache-Control"] = "no-store"
@@ -181,6 +247,41 @@ def _docs_blocked(path: str) -> bool:
     if path in _DOCS_PATHS:
         return True
     return path.startswith("/docs/") or path.startswith("/redoc/")
+
+
+def _is_protected_write(method: str, path: str) -> bool:
+    if method == "POST" and path in {
+        "/api/chat",
+        "/api/chat/stream",
+        "/api/upload",
+        "/api/sessions",
+        "/api/clear",
+    }:
+        return True
+    if method == "POST" and path.startswith("/api/sessions/"):
+        return True
+    if method == "DELETE" and path.startswith("/api/sessions/"):
+        return True
+    return False
+
+
+def _banned_write_blocked(request: Request, vid: str) -> JSONResponse | None:
+    if not vid:
+        return None
+    from app.audit import is_banned, write_audit
+
+    if not is_banned(vid):
+        return None
+    if not _is_protected_write(request.method.upper(), request.url.path):
+        return None
+    write_audit(
+        "ban_hit",
+        vid=vid,
+        path=request.url.path,
+        ip=client_ip(request),
+        detail="已封禁",
+    )
+    return JSONResponse({"detail": "已封禁"}, status_code=403)
 
 
 class PublicHardeningMiddleware(BaseHTTPMiddleware):
@@ -198,16 +299,21 @@ class PublicHardeningMiddleware(BaseHTTPMiddleware):
             if raw_host not in hosts and host_only not in hosts:
                 return JSONResponse({"detail": "Invalid host header"}, status_code=400)
 
+        if is_public_mode():
+            vid = get_visitor_id(request)
+            set_current_visitor(vid)
+            banned = _banned_write_blocked(request, vid)
+            if banned is not None:
+                apply_security_headers(request, banned)
+                attach_visitor_cookie(banned, request)
+                return banned
+        else:
+            set_current_visitor("")
+
         limited = check_rate_limit(request)
         if limited is not None:
             apply_security_headers(request, limited)
             return limited
-
-        if is_public_mode():
-            vid = get_visitor_id(request)
-            set_current_visitor(vid)
-        else:
-            set_current_visitor("")
 
         response = await call_next(request)
         apply_security_headers(request, response)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -27,6 +28,16 @@ def ensure_dirs() -> None:
 
 def _safe_id(sid: str) -> bool:
     return bool(sid and _ID_RE.fullmatch(sid))
+
+
+def session_max_messages() -> int:
+    raw = (os.getenv("KK_SESSION_MAX_MESSAGES") or "").strip()
+    if not raw:
+        return 40
+    try:
+        return int(raw)
+    except ValueError:
+        return 40
 
 
 def new_system_messages() -> list[dict[str, Any]]:
@@ -77,7 +88,21 @@ class Session:
             "preview": preview,
             "provider": self.provider,
             "model": self.model,
+            "owner": self.owner,
         }
+
+    def trim(self, max_messages: int | None = None) -> None:
+        """Keep the system message plus the last N non-system messages / ui_turns."""
+        limit = session_max_messages() if max_messages is None else int(max_messages)
+        if limit <= 0:
+            return
+        system = [m for m in self.messages if m.get("role") == "system"][:1]
+        others = [m for m in self.messages if m.get("role") != "system"]
+        if len(others) > limit:
+            others = others[-limit:]
+        self.messages = system + others
+        if len(self.ui_turns) > limit:
+            self.ui_turns = self.ui_turns[-limit:]
 
     def refresh_system_prompt(self) -> None:
         from app.agent import build_system_prompt
@@ -147,6 +172,9 @@ class SessionStore:
     def _path(self, sid: str) -> Path:
         return SESSIONS_DIR / f"{sid}.json"
 
+    def _meta_path(self, sid: str) -> Path:
+        return SESSIONS_DIR / f"{sid}.meta.json"
+
     def _read_active(self) -> str | None:
         if not ACTIVE_FILE.exists():
             return None
@@ -166,11 +194,19 @@ class SessionStore:
 
     def save(self, session: Session) -> None:
         ensure_dirs()
+        session.trim()
         session.updated_at = _now()
         self._path(session.id).write_text(
             json.dumps(session.to_dict(), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+        try:
+            self._meta_path(session.id).write_text(
+                json.dumps(session.meta(), ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     def get(self, sid: str, owner: str | None = None) -> Session | None:
         if not _safe_id(sid):
@@ -190,21 +226,67 @@ class SessionStore:
                 return None
         return sess
 
+    def _meta_from_mapping(self, data: dict[str, Any], sid: str) -> dict[str, Any]:
+        preview = str(data.get("preview") or "")
+        if not preview:
+            turns = data.get("ui_turns") if isinstance(data.get("ui_turns"), list) else []
+            for turn in reversed(turns):
+                if isinstance(turn, dict) and turn.get("role") == "user" and turn.get("content"):
+                    preview = str(turn["content"]).replace("\n", " ").strip()[:80]
+                    break
+        return {
+            "id": str(data.get("id") or sid),
+            "title": str(data.get("title") or "新对话"),
+            "created_at": str(data.get("created_at") or ""),
+            "updated_at": str(data.get("updated_at") or ""),
+            "preview": preview,
+            "provider": str(data.get("provider") or ""),
+            "model": str(data.get("model") or ""),
+            "owner": str(data.get("owner") or ""),
+        }
+
     def list(self, owner: str | None = None) -> list[dict[str, Any]]:
         ensure_dirs()
         items: list[dict[str, Any]] = []
-        for path in SESSIONS_DIR.glob("*.json"):
-            sid = path.stem
-            # Read without owner filter first so we can apply it explicitly.
+        seen: set[str] = set()
+        for path in SESSIONS_DIR.glob("*.meta.json"):
+            name = path.name
+            if not name.endswith(".meta.json"):
+                continue
+            sid = name[: -len(".meta.json")]
             if not _safe_id(sid):
                 continue
-            raw = self.get(sid)
-            if raw is None:
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
                 continue
+            if not isinstance(raw, dict):
+                continue
+            meta = self._meta_from_mapping(raw, sid)
             if owner is not None:
-                if not raw.owner or raw.owner != owner:
+                if not meta.get("owner") or meta["owner"] != owner:
                     continue
-            items.append(raw.meta())
+            items.append(meta)
+            seen.add(sid)
+        for path in SESSIONS_DIR.glob("*.json"):
+            if path.name.endswith(".meta.json"):
+                continue
+            sid = path.stem
+            if not _safe_id(sid) or sid in seen:
+                continue
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(raw, dict) or raw.get("id") != sid:
+                continue
+            meta = self._meta_from_mapping(raw, sid)
+            # Do not keep messages — drop the raw mapping after extracting keys.
+            if owner is not None:
+                if not meta.get("owner") or meta["owner"] != owner:
+                    continue
+            items.append(meta)
+            seen.add(sid)
         items.sort(key=lambda m: m.get("updated_at") or "", reverse=True)
         return items
 
@@ -265,6 +347,12 @@ class SessionStore:
             path.unlink()
         except OSError:
             return False
+        try:
+            meta = self._meta_path(sid)
+            if meta.exists():
+                meta.unlink()
+        except OSError:
+            pass
         if owner is None and self._active_id == sid:
             remaining = self.list()
             if remaining:

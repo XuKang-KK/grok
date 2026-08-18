@@ -44,6 +44,7 @@ from app.auth import (  # noqa: E402
     COOKIE_NAME,
     AccessTokenMiddleware,
     SameOriginCORSMiddleware,
+    credentials_ok,
     is_admin,
     token_cookie_digest,
     tokens_match,
@@ -51,11 +52,14 @@ from app.auth import (  # noqa: E402
 )
 from app.publicmode import (  # noqa: E402
     PublicHardeningMiddleware,
+    client_ip,
     cookie_should_be_secure,
     get_visitor_id,
     session_owner,
     settings_body_requires_admin,
 )
+from app.audit import list_bans, save_bans, write_audit  # noqa: E402
+from app.quota import add_usage, check_quota, estimate_tokens  # noqa: E402
 from app.browser import chromium_available  # noqa: E402
 from app.settings import (  # noqa: E402
     get_access_token,
@@ -290,7 +294,22 @@ async def login(req: LoginRequest, request: Request, response: Response) -> dict
         return {"ok": True, "auth_required": False}
     provided = (req.token or "").strip()
     if not tokens_match(provided, expected):
+        write_audit(
+            "login_fail",
+            vid=get_visitor_id(request) if is_public_mode() else "",
+            path="/api/login",
+            ip=client_ip(request),
+            detail="口令不正确",
+        )
         raise HTTPException(status_code=401, detail="口令不正确")
+    write_audit(
+        "login_ok",
+        vid=get_visitor_id(request) if is_public_mode() else "",
+        path="/api/login",
+        ip=client_ip(request),
+        admin=True,
+        detail="ok",
+    )
     response.set_cookie(
         key=COOKIE_NAME,
         value=token_cookie_digest(provided),
@@ -505,7 +524,16 @@ async def media(folder: str, name: str, request: Request) -> FileResponse:
         target = (base / parts[0]).resolve()
     if not target.is_relative_to(base) or not target.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
-    return FileResponse(target)
+    ext = target.suffix.lower()
+    if ext in IMAGE_EXTS:
+        media_type = IMAGE_EXTS[ext]
+    else:
+        media_type = "application/octet-stream"
+    return FileResponse(
+        target,
+        media_type=media_type,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.get("/api/history")
@@ -614,12 +642,15 @@ def _collect_turn(
     *,
     provider: str | None = None,
     model: str | None = None,
+    request: Request | None = None,
+    vid: str = "",
 ) -> dict[str, Any]:
     """Run the agent loop and persist UI + model history."""
     pid, mid = _resolve_selection(sess, provider, model)
     _require_api_key(pid)
     if not is_public_mode():
         store.select(sess.id)
+    sess.trim()
     sess.refresh_system_prompt()
     sess.maybe_title_from_user(user_text)
     content, image_paths = _user_text_and_images(sess, user_text)
@@ -627,6 +658,7 @@ def _collect_turn(
     tools_ui: list[dict[str, Any]] = []
     reply = ""
     error = None
+    usage_tokens = 0
 
     for event in run_turn(
         sess.messages,
@@ -635,7 +667,22 @@ def _collect_turn(
         model=mid,
     ):
         kind = event.get("type")
-        if kind == "tool_end":
+        if kind == "usage":
+            try:
+                usage_tokens += int(event.get("tokens") or 0)
+            except (TypeError, ValueError):
+                pass
+        elif kind == "tool_end":
+            if request is not None and is_public_mode():
+                write_audit(
+                    "tool",
+                    vid=vid,
+                    path=request.url.path,
+                    ip=client_ip(request),
+                    admin=is_admin(request),
+                    tools=[str(event.get("name") or "")],
+                    detail=str(event.get("name") or ""),
+                )
             tools_ui.append(
                 {
                     "name": event.get("name"),
@@ -671,12 +718,14 @@ def _collect_turn(
     sess.ui_turns.append(user_turn)
     sess.ui_turns.append(assistant_turn)
     store.save(sess)
+    if request is not None:
+        _finish_chat_usage(request, vid, user_text, reply, tools_ui, usage_tokens)
     return {
         "reply": reply,
         "tools": tools_ui,
         "error": error,
         "session_id": sess.id,
-        **_status_payload(sess),
+        **_status_payload(sess, request),
     }
 
 
@@ -719,13 +768,101 @@ async def upload(
     return {"ok": True, **payload}
 
 
+class BansUpdate(BaseModel):
+    vids: list[str] = Field(default_factory=list)
+
+
+def _require_bans_admin(request: Request) -> None:
+    expected = get_access_token()
+    if is_public_mode():
+        if not expected or not credentials_ok(request, expected):
+            raise HTTPException(
+                status_code=403 if not expected else 401,
+                detail="需要管理员口令" if not expected else "需要访问口令",
+            )
+        return
+    if expected and not credentials_ok(request, expected):
+        raise HTTPException(status_code=401, detail="需要访问口令")
+
+
+@app.get("/api/bans")
+async def get_bans(request: Request) -> dict[str, Any]:
+    _require_bans_admin(request)
+    return {"ok": True, "vids": list_bans()}
+
+
+@app.put("/api/bans")
+async def put_bans(req: BansUpdate, request: Request) -> dict[str, Any]:
+    _require_bans_admin(request)
+    return {"ok": True, "vids": save_bans(req.vids)}
+
+
+def _enforce_chat_quota(request: Request, text: str) -> str:
+    vid = get_visitor_id(request) if is_public_mode() else ""
+    if not is_public_mode():
+        return vid
+    denied = check_quota(vid)
+    if denied is not None:
+        write_audit(
+            "quota",
+            vid=vid,
+            path=request.url.path,
+            ip=client_ip(request),
+            admin=is_admin(request),
+            detail="用量已达上限",
+        )
+        raise denied
+    write_audit(
+        "chat",
+        vid=vid,
+        path=request.url.path,
+        ip=client_ip(request),
+        admin=is_admin(request),
+        detail=text[:80],
+    )
+    return vid
+
+
+def _finish_chat_usage(
+    request: Request,
+    vid: str,
+    text: str,
+    reply: str,
+    tools_ui: list[dict[str, Any]],
+    usage_tokens: int,
+) -> None:
+    tokens = usage_tokens if usage_tokens > 0 else estimate_tokens(text, reply)
+    names = [str(item.get("name") or "") for item in tools_ui if item.get("name")]
+    if is_public_mode():
+        add_usage(vid, tokens)
+        write_audit(
+            "chat",
+            vid=vid,
+            path=request.url.path,
+            ip=client_ip(request),
+            admin=is_admin(request),
+            tokens=tokens,
+            tools=names,
+            detail="done",
+        )
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest, request: Request) -> dict[str, Any]:
     text = req.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="消息不能为空")
+    vid = _enforce_chat_quota(request, text)
     sess = _resolve_session(req.session_id, request)
-    return _collect_turn(sess, text, provider=req.provider, model=req.model)
+    sess.trim()
+    return _collect_turn(
+        sess,
+        text,
+        provider=req.provider,
+        model=req.model,
+        request=request,
+        vid=vid,
+    )
 
 
 @app.post("/api/chat/stream")
@@ -733,7 +870,9 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
     text = req.message.strip()
     if not text:
         raise HTTPException(status_code=400, detail="消息不能为空")
+    vid = _enforce_chat_quota(request, text)
     sess = _resolve_session(req.session_id, request)
+    sess.trim()
     pid, mid = _resolve_selection(sess, req.provider, req.model)
     _require_api_key(pid)
 
@@ -743,6 +882,7 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
 
         if not is_public_mode():
             store.select(sess.id)
+        sess.trim()
         sess.refresh_system_prompt()
         sess.maybe_title_from_user(text)
         content, image_paths = _user_text_and_images(sess, text)
@@ -751,10 +891,17 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
         reply = ""
         error = None
         yielded_any = False
+        usage_tokens = 0
 
         try:
             for event in run_turn(sess.messages, provider=pid, model=mid):
                 kind = event.get("type")
+                if kind == "usage":
+                    try:
+                        usage_tokens += int(event.get("tokens") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    continue
                 if kind == "tool_start":
                     yielded_any = True
                     yield sse(
@@ -778,6 +925,16 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
                         "source": event.get("source"),
                     }
                     tools_ui.append(item)
+                    if is_public_mode():
+                        write_audit(
+                            "tool",
+                            vid=vid,
+                            path=request.url.path,
+                            ip=client_ip(request),
+                            admin=is_admin(request),
+                            tools=[str(event.get("name") or "")],
+                            detail=str(event.get("name") or ""),
+                        )
                     yield sse("tool_end", item)
                 elif kind == "approval_required":
                     yielded_any = True
@@ -818,6 +975,7 @@ async def chat_stream(req: ChatRequest, request: Request) -> StreamingResponse:
                 }
             )
         store.save(sess)
+        _finish_chat_usage(request, vid, text, reply, tools_ui, usage_tokens)
         yield sse("done", {"session_id": sess.id, "title": sess.title})
 
     return StreamingResponse(
@@ -838,7 +996,7 @@ def main() -> None:
     port = get_port()
     warn_if_lan_unprotected(host)
     print(f"启动 KK AI助手：http://{host}:{port}", flush=True)
-    uvicorn.run("app.main:app", host=host, port=port, reload=True)
+    uvicorn.run("app.main:app", host=host, port=port, reload=not is_public_mode())
 
 
 if __name__ == "__main__":
