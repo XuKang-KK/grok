@@ -838,6 +838,32 @@
     .public-banner.show { display: block; }
     body.public-visitor [data-admin-only] { display: none !important; }
 
+    .auth-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+    .auth-tabs button {
+      flex: 1;
+      background: transparent;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 8px 0;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .auth-tabs button.active {
+      background: var(--gold-dim);
+      color: var(--gold);
+      border-color: rgba(244,197,106,0.35);
+    }
+    .user-chip {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .user-chip.show { display: inline-flex; }
+    .user-chip strong { color: var(--text); font-weight: 600; }
+
   </style>
 </head>
 <body>
@@ -848,6 +874,20 @@
       <input type="password" id="authTokenInput" placeholder="访问口令" data-i18n-placeholder="auth.placeholder" autocomplete="current-password" />
       <button type="submit" id="authSubmit" data-i18n="auth.submit">进入</button>
       <p class="err" id="authMsg"></p>
+    </form>
+  </div>
+  <div class="auth-gate" id="userGate" hidden>
+    <form class="auth-card" id="userAuthForm">
+      <h2 data-i18n="userAuth.title">登录账号</h2>
+      <p data-i18n="userAuth.hint">对外访问需要登录后才能聊天。</p>
+      <div class="auth-tabs">
+        <button type="button" id="tabLogin" class="active" data-i18n="userAuth.loginTab">登录</button>
+        <button type="button" id="tabRegister" data-i18n="userAuth.registerTab">注册</button>
+      </div>
+      <input type="text" id="userNameInput" placeholder="用户名" data-i18n-placeholder="userAuth.username" autocomplete="username" />
+      <input type="password" id="userPassInput" placeholder="密码" data-i18n-placeholder="userAuth.password" autocomplete="current-password" />
+      <button type="submit" id="userAuthSubmit" data-i18n="userAuth.loginSubmit">登录</button>
+      <p class="err" id="userAuthMsg"></p>
     </form>
   </div>
   <div class="backdrop" id="backdrop"></div>
@@ -888,6 +928,10 @@
           <span class="model-pill" id="modelPill" title="选择模型" data-i18n-title="model.selectTitle">GPT-5.6 Terra</span>
           <button class="ghost" id="modelBtn" type="button" data-i18n="model">模型</button>
           <button class="ghost" id="routinesBtn" type="button" data-i18n="routines">例程</button>
+          <span class="user-chip" id="userChip"><strong id="userNameLabel"></strong>
+            <button class="ghost" id="logoutBtn" type="button" data-i18n="userAuth.logout">退出</button>
+          </span>
+          <button class="ghost" id="userLoginBtn" type="button" data-i18n="userAuth.loginTab" hidden>登录</button>
           <button class="ghost lang-toggle" id="langToggle" type="button" title="EN">EN</button>
           <button class="ghost" id="settingsBtn" type="button" data-i18n="settings">设置</button>
         </div>
@@ -1128,12 +1172,89 @@
       const msg = document.getElementById("authMsg");
       if (msg) msg.textContent = "";
     }
+    let userAuthMode = "login";
+    let accountState = { authenticated: false, user: null, auth_required_for_chat: false, allow_signup: true };
+    function showUserGate() {
+      const gate = document.getElementById("userGate");
+      if (!gate) return;
+      gate.hidden = false;
+      gate.classList.add("show");
+      const inp = document.getElementById("userNameInput");
+      if (inp) setTimeout(function () { inp.focus(); }, 0);
+    }
+    function hideUserGate() {
+      const gate = document.getElementById("userGate");
+      if (!gate) return;
+      gate.hidden = true;
+      gate.classList.remove("show");
+      const msg = document.getElementById("userAuthMsg");
+      if (msg) msg.textContent = "";
+    }
+    function setUserAuthMode(mode) {
+      userAuthMode = mode === "register" ? "register" : "login";
+      const tabLogin = document.getElementById("tabLogin");
+      const tabRegister = document.getElementById("tabRegister");
+      if (tabLogin) tabLogin.classList.toggle("active", userAuthMode === "login");
+      if (tabRegister) tabRegister.classList.toggle("active", userAuthMode === "register");
+      const submit = document.getElementById("userAuthSubmit");
+      if (submit) submit.textContent = userAuthMode === "register" ? t("userAuth.registerSubmit") : t("userAuth.loginSubmit");
+      const title = document.querySelector("#userGate h2");
+      if (title) title.textContent = userAuthMode === "register" ? t("userAuth.registerTitle") : t("userAuth.title");
+    }
+    function applyAccountUi(data) {
+      if (!data) return;
+      accountState = {
+        authenticated: !!data.authenticated,
+        user: data.user || null,
+        auth_required_for_chat: !!data.auth_required_for_chat,
+        allow_signup: data.allow_signup !== false,
+      };
+      const chip = document.getElementById("userChip");
+      const label = document.getElementById("userNameLabel");
+      const loginBtn = document.getElementById("userLoginBtn");
+      const tabRegister = document.getElementById("tabRegister");
+      if (tabRegister) tabRegister.style.display = accountState.allow_signup ? "" : "none";
+      if (accountState.authenticated && accountState.user) {
+        if (label) label.textContent = accountState.user.username || "";
+        if (chip) chip.classList.add("show");
+        if (loginBtn) loginBtn.hidden = true;
+        hideUserGate();
+      } else {
+        if (chip) chip.classList.remove("show");
+        if (loginBtn) loginBtn.hidden = false;
+        if (accountState.auth_required_for_chat) showUserGate();
+        else hideUserGate();
+      }
+    }
+    async function refreshAccount() {
+      try {
+        const res = await _rawFetch("/api/auth/me");
+        const data = await res.json();
+        applyAccountUi(data);
+        return data;
+      } catch (e) {
+        return null;
+      }
+    }
     window.fetch = async function (input, init) {
       const url = typeof input === "string" ? input : (input && input.url) || "";
       const res = await _rawFetch(input, init);
       const path = String(url).split("?")[0];
-      if (res.status === 401 && path.indexOf("/api/") === 0 && path.indexOf("/api/login") < 0 && path.indexOf("/api/health") < 0) {
-        showAuthGate();
+      if (res.status === 401 && path.indexOf("/api/") === 0
+          && path.indexOf("/api/login") < 0
+          && path.indexOf("/api/auth/") < 0
+          && path.indexOf("/api/health") < 0) {
+        try {
+          const cloned = res.clone();
+          const body = await cloned.json().catch(function () { return {}; });
+          if (body && body.detail === "请先登录") {
+            showUserGate();
+          } else {
+            showAuthGate();
+          }
+        } catch (e) {
+          showAuthGate();
+        }
       }
       return res;
     };
@@ -1143,8 +1264,10 @@
         const data = await h.json();
         if (data && data.public_mode) {
           applyPublicUi(data);
+          await refreshAccount();
           return;
         }
+        await refreshAccount();
         if (data && data.auth_required) {
           const probe = await _rawFetch("/api/settings");
           if (probe.status === 401) showAuthGate();
@@ -2082,6 +2205,51 @@
     }
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+    const tabLogin = document.getElementById("tabLogin");
+    const tabRegister = document.getElementById("tabRegister");
+    if (tabLogin) tabLogin.addEventListener("click", () => setUserAuthMode("login"));
+    if (tabRegister) tabRegister.addEventListener("click", () => setUserAuthMode("register"));
+    const userLoginBtn = document.getElementById("userLoginBtn");
+    if (userLoginBtn) userLoginBtn.addEventListener("click", () => { setUserAuthMode("login"); showUserGate(); });
+    const logoutBtn = document.getElementById("logoutBtn");
+    if (logoutBtn) {
+      logoutBtn.addEventListener("click", async () => {
+        try { await _rawFetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
+        await refreshAccount();
+        loadHistory();
+      });
+    }
+    const userAuthForm = document.getElementById("userAuthForm");
+    if (userAuthForm) {
+      userAuthForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const username = (document.getElementById("userNameInput").value || "").trim();
+        const password = document.getElementById("userPassInput").value || "";
+        const msg = document.getElementById("userAuthMsg");
+        if (msg) msg.textContent = "";
+        const path = userAuthMode === "register" ? "/api/auth/register" : "/api/auth/login";
+        try {
+          const res = await _rawFetch(path, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            if (msg) msg.textContent = data.detail || t("userAuth.bad");
+            return;
+          }
+          document.getElementById("userPassInput").value = "";
+          hideUserGate();
+          await refreshAccount();
+          loadCatalog().catch(() => {});
+          loadHistory();
+          loadSettingsPanel().catch(() => {});
+        } catch (err) {
+          if (msg) msg.textContent = t("userAuth.bad");
+        }
+      });
     }
     const authForm = document.getElementById("authForm");
     if (authForm) {

@@ -95,6 +95,15 @@ def attach_visitor_cookie(response: Response, request: Request) -> None:
 
 def session_owner(request: Request) -> str | None:
     """Owner filter for the session store. None = local (no isolation)."""
+    try:
+        from app.accounts import current_user, owner_key_for_user
+
+        user = current_user(request)
+        key = owner_key_for_user(user)
+        if key:
+            return key
+    except Exception:
+        pass
     if not is_public_mode():
         return None
     return get_visitor_id(request)
@@ -212,7 +221,11 @@ def check_rate_limit(request: Request) -> Response | None:
         vid_ok = _allow("upload-vid", vid, limit, window)
         if not ip_ok or not vid_ok:
             return _rate_limited_response(request, "upload")
-    elif method == "POST" and path == "/api/login":
+    elif method == "POST" and path in {
+        "/api/login",
+        "/api/auth/login",
+        "/api/auth/register",
+    }:
         limit = _int_env("KK_LOGIN_RATE", 10)
         ip_ok = _allow("login-ip", ip, limit, window)
         vid_ok = _allow("login-vid", vid, limit, window)
@@ -266,17 +279,27 @@ def _is_protected_write(method: str, path: str) -> bool:
 
 
 def _banned_write_blocked(request: Request, vid: str) -> JSONResponse | None:
-    if not vid:
-        return None
     from app.audit import is_banned, write_audit
 
-    if not is_banned(vid):
+    user_id = ""
+    try:
+        from app.accounts import current_user
+
+        user = current_user(request)
+        if user:
+            user_id = str(user.get("id") or "")
+    except Exception:
+        user_id = ""
+    if not vid and not user_id:
+        return None
+    if not is_banned(vid, user_id=user_id):
         return None
     if not _is_protected_write(request.method.upper(), request.url.path):
         return None
     write_audit(
         "ban_hit",
         vid=vid,
+        user=user_id,
         path=request.url.path,
         ip=client_ip(request),
         detail="已封禁",

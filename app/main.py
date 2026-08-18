@@ -58,7 +58,19 @@ from app.publicmode import (  # noqa: E402
     session_owner,
     settings_body_requires_admin,
 )
-from app.audit import list_bans, save_bans, write_audit  # noqa: E402
+from app.audit import list_bans, list_banned_users, save_bans, write_audit  # noqa: E402
+from app.accounts import (  # noqa: E402
+    allow_signup,
+    authenticate,
+    clear_user_cookie,
+    current_user,
+    owner_key_for_user,
+    public_user,
+    quota_key_for_request,
+    register_user,
+    require_account,
+    set_user_cookie,
+)
 from app.quota import add_usage, check_quota, estimate_tokens  # noqa: E402
 from app.browser import chromium_available  # noqa: E402
 from app.settings import (  # noqa: E402
@@ -149,6 +161,11 @@ class LoginRequest(BaseModel):
     token: str = Field(default="", max_length=512)
 
 
+class AccountAuthRequest(BaseModel):
+    username: str = Field(default="", max_length=64)
+    password: str = Field(default="", max_length=256)
+
+
 class ModelSelect(BaseModel):
     family: str | None = None
     provider: str | None = None
@@ -190,7 +207,12 @@ def _status_payload(
         "version": __version__,
         "public_mode": is_public_mode(),
         "is_admin": admin,
+        "auth_required_for_chat": bool(is_public_mode() and require_account()),
+        "allow_signup": bool(allow_signup()),
     }
+    if request is not None:
+        payload["user"] = public_user(current_user(request))
+        payload["authenticated"] = bool(payload["user"])
     if not is_public_mode() or admin:
         payload["workspace"] = str((PROJECT_ROOT / "workspace").resolve())
     if "ccapi_base_url" in pub:
@@ -320,6 +342,83 @@ async def login(req: LoginRequest, request: Request, response: Response) -> dict
         max_age=60 * 60 * 24 * 30,
     )
     return {"ok": True, "auth_required": True}
+
+
+@app.post("/api/auth/register", status_code=201)
+async def auth_register(
+    req: AccountAuthRequest, request: Request, response: Response
+) -> dict[str, Any]:
+    if not allow_signup():
+        raise HTTPException(status_code=403, detail="注册已关闭")
+    user, err = register_user(req.username, req.password)
+    if err or user is None:
+        detail = err or "注册失败"
+        code = 403 if detail == "注册已关闭" else 400
+        raise HTTPException(status_code=code, detail=detail)
+    write_audit(
+        "register",
+        vid=get_visitor_id(request) if is_public_mode() else "",
+        user=str(user.get("id") or ""),
+        path="/api/auth/register",
+        ip=client_ip(request),
+        detail=str(user.get("username") or ""),
+    )
+    set_user_cookie(response, request, str(user["id"]))
+    return {"ok": True, "user": public_user(user)}
+
+
+@app.post("/api/auth/login")
+async def auth_login(
+    req: AccountAuthRequest, request: Request, response: Response
+) -> dict[str, Any]:
+    user, err = authenticate(req.username, req.password)
+    if err or user is None:
+        write_audit(
+            "login_fail",
+            vid=get_visitor_id(request) if is_public_mode() else "",
+            path="/api/auth/login",
+            ip=client_ip(request),
+            detail="bad_password",
+        )
+        raise HTTPException(status_code=401, detail=err or "用户名或密码不正确")
+    write_audit(
+        "login_ok",
+        vid=get_visitor_id(request) if is_public_mode() else "",
+        user=str(user.get("id") or ""),
+        path="/api/auth/login",
+        ip=client_ip(request),
+        detail=str(user.get("username") or ""),
+    )
+    set_user_cookie(response, request, str(user["id"]))
+    return {"ok": True, "user": public_user(user)}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request, response: Response) -> dict[str, Any]:
+    user = current_user(request)
+    write_audit(
+        "logout",
+        vid=get_visitor_id(request) if is_public_mode() else "",
+        user=str((user or {}).get("id") or ""),
+        path="/api/auth/logout",
+        ip=client_ip(request),
+        detail="ok",
+    )
+    clear_user_cookie(response)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request) -> dict[str, Any]:
+    user = current_user(request)
+    return {
+        "ok": True,
+        "authenticated": bool(user),
+        "user": public_user(user),
+        "auth_required_for_chat": bool(is_public_mode() and require_account()),
+        "allow_signup": bool(allow_signup()),
+        "public_mode": is_public_mode(),
+    }
 
 
 @app.get("/api/settings")
@@ -741,9 +840,10 @@ async def upload(
     if declared is not None and declared > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="文件过大，上限约 5MB")
     raw = await file.read()
-    owner = session_owner(request) or ""
+    # Files stay keyed by kk_vid; session/quota ownership uses user:<id>.
+    owner = get_visitor_id(request) if is_public_mode() else ""
     try:
-        payload = json.loads(save_upload(filename, raw, owner=owner if is_public_mode() else ""))
+        payload = json.loads(save_upload(filename, raw, owner=owner))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"上传失败: {exc}") from exc
     if payload.get("error"):
@@ -770,6 +870,7 @@ async def upload(
 
 class BansUpdate(BaseModel):
     vids: list[str] = Field(default_factory=list)
+    users: list[str] | None = None
 
 
 def _require_bans_admin(request: Request) -> None:
@@ -788,24 +889,29 @@ def _require_bans_admin(request: Request) -> None:
 @app.get("/api/bans")
 async def get_bans(request: Request) -> dict[str, Any]:
     _require_bans_admin(request)
-    return {"ok": True, "vids": list_bans()}
+    return {"ok": True, "vids": list_bans(), "users": list_banned_users()}
 
 
 @app.put("/api/bans")
 async def put_bans(req: BansUpdate, request: Request) -> dict[str, Any]:
     _require_bans_admin(request)
-    return {"ok": True, "vids": save_bans(req.vids)}
+    vids = save_bans(req.vids, users=req.users)
+    return {"ok": True, "vids": vids, "users": list_banned_users()}
 
 
 def _enforce_chat_quota(request: Request, text: str) -> str:
     vid = get_visitor_id(request) if is_public_mode() else ""
     if not is_public_mode():
         return vid
-    denied = check_quota(vid)
+    qkey = quota_key_for_request(request, vid)
+    user = current_user(request)
+    uid = str((user or {}).get("id") or "")
+    denied = check_quota(qkey)
     if denied is not None:
         write_audit(
             "quota",
             vid=vid,
+            user=uid,
             path=request.url.path,
             ip=client_ip(request),
             admin=is_admin(request),
@@ -815,12 +921,13 @@ def _enforce_chat_quota(request: Request, text: str) -> str:
     write_audit(
         "chat",
         vid=vid,
+        user=uid,
         path=request.url.path,
         ip=client_ip(request),
         admin=is_admin(request),
         detail=text[:80],
     )
-    return vid
+    return qkey
 
 
 def _finish_chat_usage(

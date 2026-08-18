@@ -34,6 +34,10 @@ _PUBLIC_API = {
     ("GET", "/api/health"),
     ("GET", "/api/ready"),
     ("POST", "/api/login"),
+    ("POST", "/api/auth/register"),
+    ("POST", "/api/auth/login"),
+    ("POST", "/api/auth/logout"),
+    ("GET", "/api/auth/me"),
 }
 
 # Visitor-reachable prefixes when KK_PUBLIC is on (chat stays open).
@@ -137,6 +141,33 @@ def _is_visitor_path(method: str, path: str) -> bool:
     return False
 
 
+_ACCOUNT_EXACT = {
+    ("POST", "/api/chat"),
+    ("POST", "/api/chat/stream"),
+    ("POST", "/api/upload"),
+    ("GET", "/api/history"),
+    ("GET", "/api/sessions"),
+    ("POST", "/api/sessions"),
+    ("POST", "/api/clear"),
+    ("PUT", "/api/model"),
+}
+
+
+def _requires_user_account(method: str, path: str) -> bool:
+    m = method.upper()
+    if (m, path) in _ACCOUNT_EXACT:
+        return True
+    if path.startswith("/api/sessions/"):
+        return True
+    if m == "POST" and path.startswith("/api/chat"):
+        return True
+    return False
+
+
+def _account_denied() -> JSONResponse:
+    return JSONResponse({"detail": "请先登录"}, status_code=401)
+
+
 def _admin_denied(expected: str) -> JSONResponse:
     if not expected:
         return JSONResponse({"detail": "需要管理员口令"}, status_code=403)
@@ -157,7 +188,20 @@ class AccessTokenMiddleware(BaseHTTPMiddleware):
                 if not expected or not credentials_ok(request, expected):
                     return _admin_denied(expected)
                 return await call_next(request)
-            if _is_visitor_path(method, path) or is_public_api(method, path):
+            if is_public_api(method, path):
+                return await call_next(request)
+            if _is_visitor_path(method, path):
+                try:
+                    from app.accounts import current_user, require_account
+
+                    if require_account() and _requires_user_account(method, path):
+                        if current_user(request) is None and not credentials_ok(request, expected or ""):
+                            return _account_denied()
+                except Exception:
+                    from app.accounts import require_account
+
+                    if require_account() and _requires_user_account(method, path):
+                        return _account_denied()
                 return await call_next(request)
             # Unknown /api/* in public mode: require admin
             if not expected or not credentials_ok(request, expected):

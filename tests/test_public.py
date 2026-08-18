@@ -43,8 +43,14 @@ def _isolate(tmp_path, monkeypatch) -> None:
         "KK_SESSION_MAX_MESSAGES",
         "KK_UPLOAD_RATE",
         "KK_LOGIN_RATE",
+        "KK_SECRETS_KEY",
+        "KK_ALLOW_SIGNUP",
+        "KK_REQUIRE_ACCOUNT",
+        "KK_SESSION_SECRET",
     ):
         monkeypatch.delenv(name, raising=False)
+    # Existing visitor tests cover anonymous public mode.
+    monkeypatch.setenv("KK_REQUIRE_ACCOUNT", "0")
     from app.publicmode import reset_rate_limits
     from app.quota import reset_quota
 

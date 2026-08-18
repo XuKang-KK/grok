@@ -40,7 +40,14 @@ logger = logging.getLogger("kk")
 _PUBLIC_LOCK_WARNED = False
 
 _SECRET_KEYS = frozenset(
-    {"xai_api_key", "openai_api_key", "anthropic_api_key", "ccapi_api_key", "access_token"}
+    {
+        "xai_api_key",
+        "openai_api_key",
+        "anthropic_api_key",
+        "ccapi_api_key",
+        "access_token",
+        "kk_access_token",
+    }
 )
 _STR_KEYS = frozenset({"provider", "model", "grok_model", "image_model", "language", "ccapi_base_url"})
 
@@ -66,7 +73,7 @@ def load_settings() -> dict[str, Any]:
                 data = raw
         except (OSError, json.JSONDecodeError):
             data = {}
-    return data
+    return _decrypt_secret_fields(data)
 
 
 def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
@@ -112,10 +119,31 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
         current["grok_model"] = str(updates["grok_model"]).strip()
         current["model"] = current["grok_model"]
     SETTINGS_FILE.write_text(
-        json.dumps(current, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(_encrypt_secret_fields(current), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     return current
+
+
+
+def _decrypt_secret_fields(data: dict[str, Any]) -> dict[str, Any]:
+    from app.secrets_crypto import decrypt_str
+
+    out = dict(data)
+    for key in _SECRET_KEYS:
+        if key in out and out[key] not in (None, ""):
+            out[key] = decrypt_str(str(out[key]))
+    return out
+
+
+def _encrypt_secret_fields(data: dict[str, Any]) -> dict[str, Any]:
+    from app.secrets_crypto import encrypt_str
+
+    out = dict(data)
+    for key in _SECRET_KEYS:
+        if key in out and out[key] not in (None, ""):
+            out[key] = encrypt_str(str(out[key]).strip())
+    return out
 
 
 def get_api_key(provider: str | None = None) -> str:
@@ -257,7 +285,16 @@ def public_settings(*, is_admin: bool = False) -> dict[str, Any]:
         "ccapi_base_presets": list(CCAPI_BASE_PRESETS),
         "public_mode": is_public_mode(),
         "is_admin": bool(is_admin),
+        "allow_signup": True,
+        "auth_required_for_chat": False,
     }
+    try:
+        from app.accounts import allow_signup, require_account
+
+        payload["allow_signup"] = bool(allow_signup())
+        payload["auth_required_for_chat"] = bool(is_public_mode() and require_account())
+    except Exception:
+        pass
     if is_public_mode() and not is_admin:
         payload.pop("ccapi_base_url", None)
         payload.pop("ccapi_base_presets", None)

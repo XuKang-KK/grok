@@ -600,6 +600,8 @@ def save_upload(filename: str, content: bytes, owner: str = "") -> str:
     workspace = WORKSPACE.resolve()
     dest_dir = (workspace / UPLOADS_DIRNAME).resolve()
     owner = (owner or "").strip()
+    if owner.startswith("user:"):
+        owner = owner[5:]
     if owner:
         if not re.fullmatch(r"[0-9a-f]{32}", owner):
             return json.dumps({"error": "非法访客标识"}, ensure_ascii=False)

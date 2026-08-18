@@ -32,6 +32,10 @@ def _isolate(tmp_path, monkeypatch) -> None:
         "KK_ALLOWED_HOSTS",
         "KK_CHAT_RATE",
         "KK_CHAT_WINDOW_SEC",
+        "KK_SECRETS_KEY",
+        "KK_ALLOW_SIGNUP",
+        "KK_REQUIRE_ACCOUNT",
+        "KK_SESSION_SECRET",
     ):
         monkeypatch.delenv(name, raising=False)
 

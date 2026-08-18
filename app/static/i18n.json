@@ -131,7 +131,18 @@
     "public.tagline": "聊天 · 网页 · 生图",
     "settings.adminOnly": "管理员登录后可改密钥",
     "auth.adminLogin": "管理员登录",
-    "composer.hintPublic": "对外模式：可聊天、搜索网页、抓取链接、生成图片。无法访问服务器文件或命令。"
+    "composer.hintPublic": "对外模式：可聊天、搜索网页、抓取链接、生成图片。无法访问服务器文件或命令。",
+    "userAuth.title": "登录账号",
+    "userAuth.registerTitle": "注册账号",
+    "userAuth.hint": "对外访问需要登录后才能聊天。",
+    "userAuth.loginTab": "登录",
+    "userAuth.registerTab": "注册",
+    "userAuth.username": "用户名",
+    "userAuth.password": "密码",
+    "userAuth.loginSubmit": "登录",
+    "userAuth.registerSubmit": "注册并登录",
+    "userAuth.logout": "退出",
+    "userAuth.bad": "用户名或密码不正确"
   },
   "en": {
     "app.name": "KK AI助手",
@@ -265,6 +276,17 @@
     "public.tagline": "Chat · Web · Images",
     "settings.adminOnly": "Sign in as admin to change API keys",
     "auth.adminLogin": "Admin sign-in",
-    "composer.hintPublic": "Public mode: chat, search the web, fetch pages, and generate images. No server files or commands."
+    "composer.hintPublic": "Public mode: chat, search the web, fetch pages, and generate images. No server files or commands.",
+    "userAuth.title": "Sign in",
+    "userAuth.registerTitle": "Create account",
+    "userAuth.hint": "Public access requires an account before chat.",
+    "userAuth.loginTab": "Sign in",
+    "userAuth.registerTab": "Register",
+    "userAuth.username": "Username",
+    "userAuth.password": "Password",
+    "userAuth.loginSubmit": "Sign in",
+    "userAuth.registerSubmit": "Register and sign in",
+    "userAuth.logout": "Sign out",
+    "userAuth.bad": "Incorrect username or password"
   }
 }

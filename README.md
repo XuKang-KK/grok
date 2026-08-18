@@ -1,6 +1,6 @@
-# KK AI助手（本地 v1.5.2）
+# KK AI助手（本地 v1.6.0）
 
-一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.5.2 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
+一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.6.0 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
 
 **对外 = 右侧 GPT / Claude / Grok / Gemini，后台中转站，不展示价格。** 对话一律走 CCAPI；右侧不出现 xAI / OpenAI / Anthropic / 中转站页签，也不显示基址或价格。
 
@@ -218,11 +218,21 @@ grok-assistant/
 ```
 
 
+
+## 账号与设置加密（v1.6.0）
+
+- `KK_SECRETS_KEY`：用于加密 `data/settings.json` 里的 API 密钥与访问口令（写入时加 `enc:v1:` 前缀）。未设置时本地仍可明文保存；对外模式未设置会打一次警告。
+- `POST /api/auth/register` / `login` / `logout`，`GET /api/auth/me`。密码用 `hashlib.scrypt` 哈希，cookie `kk_user` 为 HMAC 签名会话（30 天，HttpOnly，SameSite=lax）。
+- `KK_ALLOW_SIGNUP` 默认开启；设为 `0` 时注册返回 403。
+- 对外模式 `KK_REQUIRE_ACCOUNT` 默认为 1：聊天 / 上传 / 会话需登录，未登录返回 401「请先登录」。本地模式账号可选，不登录仍可聊天。
+- 管理员仍用 `KK_ACCESS_TOKEN`（网页「管理员口令」）。用户账号不能改密钥。
+- 封禁列表 `data/bans.json` 支持 `vids` 与 `users`。
+
 ## 对外安全（KK_PUBLIC）
 
 公网部署设 `KK_PUBLIC=1`（或 `PUBLIC_MODE=1`）。**任一来源为真即对外**：环境变量或 `settings.json` 的 `public_mode`。环境变量为真时，`settings.json` 的 `public_mode: false` **关不掉**对外模式（fail-secure）。本地开发默认不要开。
 
-- 访客可以聊天、选模型、管理**自己的**会话；不能列出别人的对话，也不能改密钥。
+- 访客需登录后才能聊天、选模型、管理**自己的**会话（`KK_REQUIRE_ACCOUNT=1`）；不能列出别人的对话，也不能改密钥。
 - 工具只剩 `web_search` / `fetch_url` / `generate_image`。shell、文件、记忆、浏览器、MCP、例程调度都关掉。
 - 必须另设 `KK_ACCESS_TOKEN` 作为管理员口令。`POST /api/login` 把口令的 sha256 写入 cookie `kk_token`；**哈希不是口令**，用哈希当 Bearer 会被拒绝。
 - 前面加 TLS（Caddy / nginx）。反代后设 `KK_TRUSTED_PROXY=1`，限流取 `X-Forwarded-For` **最右侧** hop。登录 cookie 在 HTTPS 或 `X-Forwarded-Proto: https` 时带 `Secure`。
@@ -235,14 +245,17 @@ grok-assistant/
 # .env
 KK_PUBLIC=1
 KK_ACCESS_TOKEN=请换成足够长的随机口令
+KK_SECRETS_KEY=请换成足够长的随机口令
 KK_TRUSTED_PROXY=1
 HOST=0.0.0.0
+KK_ALLOW_SIGNUP=1
+KK_REQUIRE_ACCOUNT=1
 # KK_BANNED_VIDS=
 # KK_VISITOR_TOKEN_LIMIT=200000
 # KK_GLOBAL_TOKEN_LIMIT=2000000
 ```
 
-本模式**不是**完整多租户隔离：没有用户注册体系；`settings.json` 未做磁盘加密；CCAPI 花销记在你的账号上。防火墙与密钥轮换仍要你自己做。
+访客聊天在 `KK_REQUIRE_ACCOUNT=1`（对外默认）时必须先注册/登录。会话与配额按 `user:<id>` 隔离，不再允许匿名 `kk_vid` 聊天。管理员接口仍用 `KK_ACCESS_TOKEN`（不是用户 `is_admin`）。`data/settings.json` 里的 API 密钥可用 `KK_SECRETS_KEY` 加密（`enc:v1:`）。HTTPS、服务条款、OAuth 仍需你自己完成。CCAPI 花销记在你的账号上。
 
 ## 上线前你必须自己做的
 
