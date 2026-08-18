@@ -18,6 +18,11 @@ def get_operator_email() -> str:
     return (os.getenv("KK_OPERATOR_EMAIL") or "").strip()
 
 
+def get_public_site() -> str:
+    raw = (os.getenv("KK_PUBLIC_SITE") or "").strip().rstrip("/")
+    return raw or "https://kkaiagent.com"
+
+
 def operator_contact(lang: str = "zh") -> str:
     email = get_operator_email()
     if email:
@@ -116,4 +121,5 @@ def legal_payload(lang: str | None = None) -> dict[str, Any]:
         "updated": LEGAL_UPDATED,
         "language": code,
         "contact": contact,
+        "site": get_public_site(),
     }

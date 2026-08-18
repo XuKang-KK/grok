@@ -2,7 +2,7 @@
 
 一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.6.1 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
 
-**对外 = 右侧 GPT / Claude / Grok / Gemini，后台中转站，不展示价格。** 对话一律走 CCAPI；右侧不出现 xAI / OpenAI / Anthropic / 中转站页签，也不显示基址或价格。
+**对外域名：`kkaiagent.com`。** 右侧 GPT / Claude / Grok / Gemini，后台中转站，不展示价格。 对话一律走 CCAPI；右侧不出现 xAI / OpenAI / Anthropic / 中转站页签，也不显示基址或价格。
 
 - 后端：FastAPI；默认全部聊天经 CCAPI 中转（`https://api.ccapi.ai/v1`，设置可改）。高级直连仍可走 xAI / OpenAI / Anthropic，但默认 UI 不会切到这三家。
 - 前端：单页中文深色聊天界面（左侧多会话，右侧 GPT / Claude / Grok / Gemini 模型轨，设置 / 例程抽屉）

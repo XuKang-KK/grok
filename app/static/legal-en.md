@@ -1,7 +1,7 @@
 <!-- section:terms -->
 # Terms of Service
 
-KK AI助手 is an independent product run by the operator of this site. It is **not** an official product, subsidiary, or agent of xAI, OpenAI, Google, Anthropic, or any other model vendor.
+KK AI助手 is an independent product run by the operator of this site. The public site is **kkaiagent.com** (and www.kkaiagent.com). It is **not** an official product, subsidiary, or agent of xAI, OpenAI, Google, Anthropic, or any other model vendor.
 
 These pages are a product template. Last updated: **2026-08-18**. Review and edit them before a public launch.
 

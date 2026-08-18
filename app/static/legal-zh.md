@@ -1,7 +1,7 @@
 <!-- section:terms -->
 # 服务条款
 
-KK AI助手是一个独立产品，由本站点的运营者提供和维护。本服务**不是** xAI、OpenAI、Google、Anthropic 或其他模型厂商的官方产品、子公司或代理。
+KK AI助手是一个独立产品，由本站点的运营者提供和维护。公开站点为 **kkaiagent.com**（以及 www.kkaiagent.com）。本服务**不是** xAI、OpenAI、Google、Anthropic 或其他模型厂商的官方产品、子公司或代理。
 
 本页是产品自带的条款模板，最后更新日期：**2026-08-18**。对外公开上线前，运营者应自行审阅并按需修改。
 

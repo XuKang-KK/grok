@@ -1,0 +1,10 @@
+# 审核通过并把 DNS A/AAAA 指到这台机器后，用 Caddy 反代本机 8000。
+# 先装 Caddy，再把本文件复制为 /etc/caddy/Caddyfile（或 caddy run --config Caddyfile.example）。
+
+kkaiagent.com, www.kkaiagent.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8000
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	}
+}
