@@ -20,6 +20,7 @@ from app.providers import (
     family_catalog_payload,
     family_for_model,
     fetch_ccapi_models,
+    fetch_ccapi_public_catalogs,
     merge_model_ids,
     model_label,
     normalize_ccapi_base_url,
@@ -248,8 +249,13 @@ def models_catalog() -> dict[str, Any]:
     has_relay = bool(get_api_key("ccapi"))
     extra: list[str] = []
     source = "fallback"
-    if not _skip_remote_model_fetch() and has_relay:
-        extra = fetch_ccapi_models(get_ccapi_base_url(), get_api_key("ccapi"), timeout=8.0)
+    if not _skip_remote_model_fetch():
+        if has_relay:
+            extra = merge_model_ids(
+                extra,
+                fetch_ccapi_models(get_ccapi_base_url(), get_api_key("ccapi"), timeout=8.0),
+            )
+        extra = merge_model_ids(extra, fetch_ccapi_public_catalogs(timeout=8.0))
         if extra:
             source = "live"
     ids = list(FALLBACK_MODEL_IDS)

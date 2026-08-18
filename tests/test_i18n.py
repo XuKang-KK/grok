@@ -24,6 +24,7 @@ CORE_KEYS = (
     "family.gpt",
     "family.claude",
     "family.grok",
+    "family.gemini",
     "rail.refresh",
     "rail.noRelayKey",
     "settings.advanced",
@@ -41,7 +42,7 @@ def test_i18n_dict_has_zh_and_en_for_core_keys():
     assert data["zh"]["app.name"] == "KK AI助手"
     assert data["en"]["app.name"] == "KK AI助手"
     assert data["zh"]["settings"] != data["en"]["settings"]
-    for fam, brand in (("family.gpt", "GPT"), ("family.claude", "Claude"), ("family.grok", "Grok")):
+    for fam, brand in (("family.gpt", "GPT"), ("family.claude", "Claude"), ("family.grok", "Grok"), ("family.gemini", "Gemini")):
         assert data["zh"][fam] == brand
         assert data["en"][fam] == brand
 

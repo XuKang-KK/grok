@@ -919,6 +919,7 @@
         <button type="button" data-family="gpt">GPT</button>
         <button type="button" data-family="claude">Claude</button>
         <button type="button" data-family="grok">Grok</button>
+        <button type="button" data-family="gemini">Gemini</button>
       </div>
       <div class="rail-base" id="railBaseUrl" hidden></div>
       <div class="rail-status" id="railStatus"><span id="railKeyStatus"></span></div>
@@ -1166,9 +1167,9 @@
     const backdrop = document.getElementById("backdrop");
     let busy = false;
     let sessionId = null;
-    let catalog = { families: { gpt: [], claude: [], grok: [] }, family: "gpt", provider: "ccapi", model: "gpt-5.6-terra", has_relay_key: false, source: "fallback" };
+    let catalog = { families: { gpt: [], claude: [], grok: [], gemini: [] }, family: "gpt", provider: "ccapi", model: "gpt-5.6-terra", has_relay_key: false, source: "fallback" };
     let activeFamily = "gpt";
-    const FAMILY_IDS = ["gpt", "claude", "grok"];
+    const FAMILY_IDS = ["gpt", "claude", "grok", "gemini"];
 
     function applyPublicUi(data) {
       if (!data) return;
@@ -1629,7 +1630,8 @@
     function familyOfId(id) {
       const raw = String(id || "").toLowerCase();
       const leaf = raw.split("/").pop() || raw;
-      if (raw.indexOf("gemini") >= 0 || raw.indexOf("kimi") >= 0 || raw.indexOf("image") >= 0 || raw.indexOf("imagine") >= 0 || raw.indexOf("video") >= 0 || raw.indexOf("sora") >= 0) return "";
+      if (raw.indexOf("kimi") >= 0 || raw.indexOf("image") >= 0 || raw.indexOf("imagine") >= 0 || raw.indexOf("video") >= 0 || raw.indexOf("sora") >= 0) return "";
+      if (raw.indexOf("gemini") >= 0) return "gemini";
       if (raw.indexOf("gpt") >= 0 || raw.indexOf("chatgpt") >= 0) return "gpt";
       if (leaf.indexOf("o1") === 0 || leaf.indexOf("o3") === 0 || leaf.indexOf("o4") === 0) return "gpt";
       if (raw.indexOf("claude") >= 0 || leaf.indexOf("cursor-opus") === 0) return "claude";
@@ -1639,7 +1641,7 @@
     function prettyLabel(id) {
       const leaf = String(id || "").split("/").pop() || String(id || "");
       const low = leaf.toLowerCase();
-      const brands = [["chatgpt","ChatGPT"],["cursor-opus","Cursor Opus"],["gpt","GPT"],["claude","Claude"],["grok","Grok"]];
+      const brands = [["chatgpt","ChatGPT"],["cursor-opus","Cursor Opus"],["gemini","Gemini"],["gpt","GPT"],["claude","Claude"],["grok","Grok"]];
       let brand = null;
       let rest = leaf;
       for (let i = 0; i < brands.length; i++) {
@@ -1672,7 +1674,7 @@
     }
     function familiesFrom(data) {
       const raw = (data && data.families) || catalog.families || {};
-      const out = { gpt: [], claude: [], grok: [] };
+      const out = { gpt: [], claude: [], grok: [], gemini: [] };
       FAMILY_IDS.forEach(function (fid) {
         const rows = raw[fid] || [];
         out[fid] = rows.map(function (row) {

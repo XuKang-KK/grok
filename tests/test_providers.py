@@ -52,12 +52,15 @@ def test_family_for_model_grouping():
     assert family_for_model("grok-4.5") == "grok"
     assert family_for_model("xai/grok-4.5") == "grok"
     assert family_for_model("deepseek-v3.2") is None
-    assert family_for_model("gemini-2.5-flash") is None
+    assert family_for_model("gemini-2.5-flash") == "gemini"
+    assert family_for_model("gemini-3.5-flash") == "gemini"
+    assert family_for_model("google/gemini-3.1-pro-preview") == "gemini"
     assert family_for_model("kimi-k2") is None
     assert family_for_model("grok-imagine-image-2.0") is None
     assert family_for_model("sora-2") is None
     assert family_for_model("") is None
     assert model_label("gpt-5.6-terra") == "GPT-5.6 Terra"
+    assert model_label("gemini-3.5-flash") == "Gemini-3.5 Flash"
     assert model_label("gpt-5.4-mini") == "GPT-5.4 Mini"
     assert model_label("openai/gpt-5.2") == "GPT-5.2"
     assert model_label("cursor-opus-4-8") == "Cursor Opus-4-8"
@@ -92,21 +95,24 @@ def test_models_catalog_has_families_and_no_prices(tmp_path, monkeypatch):
     assert body.get("ok") is True
     assert body.get("source") == "fallback"
     assert body.get("provider") == "ccapi"
-    assert body.get("family") in {"gpt", "claude", "grok"}
+    assert body.get("family") in {"gpt", "claude", "grok", "gemini"}
     assert body.get("has_relay_key") is False
     assert body.get("model") == "gpt-5.6-terra"
     families = body.get("families") or {}
-    assert set(families) == {"gpt", "claude", "grok"}
+    assert set(families) == {"gpt", "claude", "grok", "gemini"}
     gpt_ids = [row["id"] for row in families["gpt"]]
     claude_ids = [row["id"] for row in families["claude"]]
     grok_ids = [row["id"] for row in families["grok"]]
+    gemini_ids = [row["id"] for row in families["gemini"]]
     assert "gpt-5.6-terra" in gpt_ids
     assert "gpt-5.6" not in gpt_ids
     assert "claude-sonnet-5" in claude_ids
     assert "cursor-opus-4-8" in claude_ids
     assert "grok-4.5" in grok_ids
+    assert "gemini-3.5-flash" in gemini_ids
+    assert "gemini-3.1-pro-preview" in gemini_ids
     blob = json.dumps(body)
-    assert "gemini" not in blob.lower()
+    assert "gemini" in blob.lower()
     assert "kimi" not in blob.lower()
     for mid in FALLBACK_MODEL_IDS:
         fam = family_for_model(mid)
@@ -138,6 +144,7 @@ def test_models_fallback_list_works_without_network(tmp_path, monkeypatch):
     assert body["families"]["gpt"]
     assert body["families"]["claude"]
     assert body["families"]["grok"]
+    assert body["families"]["gemini"]
     assert body["model"] == "gpt-5.6-terra"
     _assert_no_price_keys(body)
 
@@ -325,6 +332,7 @@ def test_ccapi_live_catalog_groups_when_mocked(tmp_path, monkeypatch):
         ]
 
     monkeypatch.setattr("app.settings.fetch_ccapi_models", fake_fetch)
+    monkeypatch.setattr("app.settings.fetch_ccapi_public_catalogs", lambda *, timeout=8.0: [])
     from app.settings import models_catalog
 
     body = models_catalog()
@@ -336,9 +344,9 @@ def test_ccapi_live_catalog_groups_when_mocked(tmp_path, monkeypatch):
     assert "openai/gpt-5.2" in gpt_ids
     assert "claude-sonnet-5" in [row["id"] for row in body["families"]["claude"]]
     assert "grok-4.5" in [row["id"] for row in body["families"]["grok"]]
+    assert "gemini-2.5-flash" in [row["id"] for row in body["families"]["gemini"]]
     blob = json.dumps(body)
     assert "deepseek-v3.2" not in blob
-    assert "gemini-2.5-flash" not in blob
     assert "kimi-k2" not in blob
     assert blob.count("sk-test-not-real") == 0
     _assert_no_price_keys(body)
@@ -414,3 +422,43 @@ def test_fetch_ccapi_models_failure_returns_empty(monkeypatch):
 
     monkeypatch.setattr("httpx.Client", BoomClient)
     assert fetch_ccapi_models("https://api.ccapi.ai/v1", "test-key") == []
+
+
+def test_fetch_ccapi_geo_ids_strips_prices(monkeypatch):
+    from app.providers import fetch_ccapi_geo_ids
+
+    class DummyResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "data": {
+                    "models": [
+                        {"id": "gemini-3.5-flash", "price": 0.1, "pricing": {"in": 1}},
+                        {"id": "gemini-3.1-pro-preview", "cost": 2, "fee": 3},
+                    ]
+                }
+            }
+
+    class DummyClient:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url, headers=None):
+            assert "geo/catalog/gemini" in url
+            return DummyResp()
+
+    monkeypatch.setattr("httpx.Client", DummyClient)
+    ids = fetch_ccapi_geo_ids("gemini")
+    assert ids == ["gemini-3.5-flash", "gemini-3.1-pro-preview"]
+    assert all(isinstance(item, str) for item in ids)
+    blob = json.dumps(ids)
+    for word in ("price", "pricing", "cost", "fee"):
+        assert word not in blob

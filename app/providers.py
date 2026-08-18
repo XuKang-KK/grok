@@ -24,6 +24,7 @@ CCAPI_BASE_URL = "https://api.ccapi.ai/v1"
 CCAPI_BASE_URL_US = "https://api.ccapi.us/v1"
 CCAPI_BASE_PRESETS = (CCAPI_BASE_URL, CCAPI_BASE_URL_US)
 CCAPI_PRICING_URL = "https://ccapi.us/pricing/"
+CCAPI_GEO_CATALOG = "https://ccapi.us/api/geo/catalog/{product}"
 
 PROVIDER_IDS = ("ccapi", "xai", "openai", "anthropic")
 
@@ -52,6 +53,8 @@ PROVIDERS: dict[str, dict[str, Any]] = {
             "claude-sonnet-5",
             "cursor-opus-4-8",
             "grok-4.5",
+            "gemini-3.1-pro-preview",
+            "gemini-3.5-flash",
         ],
         "key_field": "ccapi_api_key",
         "env_key": "CCAPI_API_KEY",
@@ -147,7 +150,7 @@ def missing_key_message(provider: str | None) -> str:
     )
 
 
-FAMILY_IDS = ("gpt", "claude", "grok")
+FAMILY_IDS = ("gpt", "claude", "grok", "gemini")
 DEFAULT_CHAT_MODEL = "gpt-5.6-terra"
 
 FALLBACK_MODEL_IDS = (
@@ -186,6 +189,8 @@ FALLBACK_MODEL_IDS = (
     "claude-sonnet-5",
     "cursor-opus-4-8",
     "grok-4.5",
+    "gemini-3.1-pro-preview",
+    "gemini-3.5-flash",
 )
 
 _PRICE_KEYS = frozenset({"price", "pricing", "cost", "fee"})
@@ -199,14 +204,16 @@ def _is_price_key(key: str) -> bool:
 
 
 def family_for_model(model_id: str | None) -> str | None:
-    """Map a model id to a surface family, or None if it stays off the three tabs."""
+    """Map a model id to a surface family, or None if it stays off the rail."""
     raw = str(model_id or "").strip().lower()
     if not raw:
         return None
     leaf = raw.rsplit("/", 1)[-1]
-    # Chat families only — omit Gemini / Kimi / image / video ids from the rail.
-    if any(token in raw for token in ("gemini", "kimi", "image", "imagine", "video", "sora")):
+    # Chat families only — omit Kimi / image / video ids from the rail.
+    if any(token in raw for token in ("kimi", "image", "imagine", "video", "sora")):
         return None
+    if "gemini" in raw:
+        return "gemini"
     if "gpt" in raw or "chatgpt" in raw or leaf.startswith(("o1", "o3", "o4")):
         return "gpt"
     if "claude" in raw or leaf.startswith("cursor-opus") or raw.startswith("cursor-opus"):
@@ -226,6 +233,7 @@ def normalize_family(value: str | None) -> str:
         "anthropic": "claude",
         "xai": "grok",
         "x.ai": "grok",
+        "google": "gemini",
     }
     mapped = aliases.get(raw)
     if mapped:
@@ -246,6 +254,7 @@ def model_label(model_id: str | None) -> str:
     for prefix, pretty in (
         ("chatgpt", "ChatGPT"),
         ("cursor-opus", "Cursor Opus"),
+        ("gemini", "Gemini"),
         ("gpt", "GPT"),
         ("claude", "Claude"),
         ("grok", "Grok"),
@@ -366,7 +375,7 @@ def catalog_payload(
     source: str = "fallback",
     family: str | None = None,
 ) -> dict[str, Any]:
-    """Consumer catalog: GPT / Claude / Grok families. No prices or base URLs."""
+    """Consumer catalog: GPT / Claude / Grok / Gemini families. No prices or base URLs."""
     return family_catalog_payload(
         model_ids=model_ids,
         source=source,
@@ -441,6 +450,57 @@ def fetch_ccapi_models(base_url: str, api_key: str, *, timeout: float = 8.0) -> 
         return []
     return parse_openai_model_ids(payload)
 
+
+def fetch_ccapi_geo_ids(product: str, *, timeout: float = 8.0) -> list[str]:
+    """GET public geo catalog ids. Never raises; [] on failure. No prices."""
+    name = str(product or "").strip()
+    if not name:
+        return []
+    url = CCAPI_GEO_CATALOG.format(product=name)
+    try:
+        import httpx
+
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            payload = strip_price_fields(resp.json())
+    except Exception:
+        return []
+    models: Any = None
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, dict):
+            models = data.get("models")
+        if models is None:
+            models = payload.get("models")
+        if models is None and isinstance(data, list):
+            models = data
+    elif isinstance(payload, list):
+        models = payload
+    if not isinstance(models, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in models:
+        mid = ""
+        if isinstance(item, dict):
+            mid = str(item.get("id") or "").strip()
+        if mid and mid not in seen:
+            out.append(mid)
+            seen.add(mid)
+    return out
+
+
+def fetch_ccapi_public_catalogs(*, timeout: float = 8.0) -> list[str]:
+    """Merge gpt / claude / gemini geo catalog ids. No prices. Skips under pytest."""
+    import sys
+
+    if "pytest" in sys.modules:
+        return []
+    merged: list[str] = []
+    for product in ("gpt", "claude", "gemini"):
+        merged = merge_model_ids(merged, fetch_ccapi_geo_ids(product, timeout=timeout))
+    return merged
 
 
 def openai_tools_to_anthropic(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
