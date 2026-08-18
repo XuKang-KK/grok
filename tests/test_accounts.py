@@ -56,7 +56,7 @@ def _isolate(tmp_path, monkeypatch) -> None:
 def _register(client: TestClient, username: str, password: str = "password1"):
     return client.post(
         "/api/auth/register",
-        json={"username": username, "password": password},
+        json={"username": username, "password": password, "accepted_terms": True},
     )
 
 

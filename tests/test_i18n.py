@@ -29,6 +29,8 @@ CORE_KEYS = (
     "rail.noRelayKey",
     "settings.advanced",
     "settings.ccapiKey",
+    "legal.terms",
+    "legal.privacy",
 )
 
 

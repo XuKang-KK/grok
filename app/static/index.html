@@ -864,6 +864,100 @@
     .user-chip.show { display: inline-flex; }
     .user-chip strong { color: var(--text); font-weight: 600; }
 
+    .site-footer {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .site-footer a {
+      color: var(--muted);
+      text-decoration: none;
+      border-bottom: 1px solid transparent;
+    }
+    .site-footer a:hover { color: var(--gold); border-bottom-color: rgba(244,197,106,0.45); }
+    .legal-accept {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin: 2px 0 12px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .legal-accept[hidden] { display: none; }
+    .legal-accept input { width: auto; margin: 3px 0 0; flex: none; accent-color: var(--gold); }
+    .legal-accept a { color: var(--gold); text-decoration: none; }
+    .legal-accept a:hover { text-decoration: underline; }
+    .legal-page {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      flex-direction: column;
+      background:
+        radial-gradient(1200px 600px at 80% -10%, rgba(244, 197, 106, 0.08), transparent 50%),
+        var(--bg);
+    }
+    body.legal-open .legal-page { display: flex; }
+    body.legal-open .shell,
+    body.legal-open .auth-gate,
+    body.legal-open .backdrop { display: none !important; }
+    .legal-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 22px 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(12, 12, 15, 0.92);
+      backdrop-filter: blur(16px);
+    }
+    .legal-bar h1 { margin: 0; font-size: 16px; color: var(--gold); font-weight: 650; }
+    .legal-back {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 12px;
+    }
+    .legal-back:hover { color: var(--gold); border-color: rgba(244,197,106,0.35); }
+    .legal-doc {
+      flex: 1;
+      overflow: auto;
+      max-width: 720px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 28px 22px 40px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+    .legal-doc h1 { font-size: 22px; color: var(--gold); margin: 0 0 16px; }
+    .legal-doc h2 { font-size: 16px; color: var(--text); margin: 26px 0 10px; }
+    .legal-doc p { margin: 0 0 12px; color: #ddd8ce; font-size: 14px; }
+    .legal-doc ul { margin: 0 0 14px 18px; color: #ddd8ce; font-size: 14px; }
+    .legal-doc li { margin: 0 0 6px; }
+    .legal-doc code {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 1px 6px;
+    }
+    .legal-meta {
+      max-width: 720px;
+      width: 100%;
+      margin: 0 auto 24px;
+      padding: 0 22px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+    }
   </style>
 </head>
 <body>
@@ -874,6 +968,11 @@
       <input type="password" id="authTokenInput" placeholder="访问口令" data-i18n-placeholder="auth.placeholder" autocomplete="current-password" />
       <button type="submit" id="authSubmit" data-i18n="auth.submit">进入</button>
       <p class="err" id="authMsg"></p>
+      <nav class="site-footer">
+        <a href="/terms" data-i18n="legal.terms">服务条款</a>
+        <span>·</span>
+        <a href="/privacy" data-i18n="legal.privacy">隐私政策</a>
+      </nav>
     </form>
   </div>
   <div class="auth-gate" id="userGate" hidden>
@@ -886,9 +985,27 @@
       </div>
       <input type="text" id="userNameInput" placeholder="用户名" data-i18n-placeholder="userAuth.username" autocomplete="username" />
       <input type="password" id="userPassInput" placeholder="密码" data-i18n-placeholder="userAuth.password" autocomplete="current-password" />
+      <label class="legal-accept" id="termsAcceptRow" hidden>
+        <input type="checkbox" id="acceptedTerms" />
+        <span id="termsAcceptText"></span>
+      </label>
       <button type="submit" id="userAuthSubmit" data-i18n="userAuth.loginSubmit">登录</button>
       <p class="err" id="userAuthMsg"></p>
+      <nav class="site-footer">
+        <a href="/terms" data-i18n="legal.terms">服务条款</a>
+        <span>·</span>
+        <a href="/privacy" data-i18n="legal.privacy">隐私政策</a>
+      </nav>
     </form>
+  </div>
+  <div class="legal-page" id="legalPage" hidden>
+    <div class="legal-bar">
+      <a class="legal-back" href="/" data-i18n="legal.back">返回聊天</a>
+      <h1 id="legalTitle">KK AI助手</h1>
+      <button class="ghost lang-toggle" id="legalLangToggle" type="button">EN</button>
+    </div>
+    <article class="legal-doc" id="legalBody"></article>
+    <p class="legal-meta" id="legalMeta"></p>
   </div>
   <div class="backdrop" id="backdrop"></div>
   <div class="shell">
@@ -952,6 +1069,11 @@
           <button id="send" type="submit" title="发送" data-i18n-title="send">↑</button>
         </form>
         <div class="hint" data-i18n="composer.hint">工具在本机 workspace 沙箱中运行，不是安全隔离环境。中风险命令需批准。可上传图片做视觉理解。</div>
+        <nav class="site-footer">
+          <a href="/terms" data-i18n="legal.terms">服务条款</a>
+          <span>·</span>
+          <a href="/privacy" data-i18n="legal.privacy">隐私政策</a>
+        </nav>
       </div>
     </div>
     <aside class="model-rail" id="modelRail" aria-label="模型" data-i18n-aria="model">
@@ -1131,6 +1253,10 @@
       document.querySelectorAll(".lang-opt").forEach(function (b) {
         b.classList.toggle("active", b.getAttribute("data-lang") === currentLang);
       });
+      const legalLang = document.getElementById("legalLangToggle");
+      if (legalLang) legalLang.textContent = currentLang === "zh" ? t("lang.switchToEn") : t("lang.switchToZh");
+      if (typeof renderLegalAccept === "function") renderLegalAccept();
+      if (typeof refreshLegalPage === "function") refreshLegalPage();
       if (typeof thread !== "undefined" && thread && thread.querySelector && thread.querySelector(".empty")) renderEmpty();
       if (typeof lastSessions !== "undefined") renderSessions(lastSessions, lastActiveId);
       if (typeof catalog !== "undefined" && typeof syncRail === "function") syncRail(catalog);
@@ -1200,6 +1326,9 @@
       if (submit) submit.textContent = userAuthMode === "register" ? t("userAuth.registerSubmit") : t("userAuth.loginSubmit");
       const title = document.querySelector("#userGate h2");
       if (title) title.textContent = userAuthMode === "register" ? t("userAuth.registerTitle") : t("userAuth.title");
+      const acceptRow = document.getElementById("termsAcceptRow");
+      if (acceptRow) acceptRow.hidden = userAuthMode !== "register";
+      if (typeof renderLegalAccept === "function") renderLegalAccept();
     }
     function applyAccountUi(data) {
       if (!data) return;
@@ -2229,11 +2358,18 @@
         const msg = document.getElementById("userAuthMsg");
         if (msg) msg.textContent = "";
         const path = userAuthMode === "register" ? "/api/auth/register" : "/api/auth/login";
+        const accepted = !!(document.getElementById("acceptedTerms") && document.getElementById("acceptedTerms").checked);
+        if (userAuthMode === "register" && !accepted) {
+          if (msg) msg.textContent = t("legal.acceptRequired");
+          return;
+        }
         try {
+          const payload = { username, password };
+          if (userAuthMode === "register") payload.accepted_terms = true;
           const res = await _rawFetch(path, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username, password }),
+            body: JSON.stringify(payload),
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
@@ -2279,7 +2415,52 @@
         }
       });
     }
+    function legalKind() {
+      const path = (location.pathname || "/").replace(/\/+$/, "") || "/";
+      if (path === "/terms") return "terms";
+      if (path === "/privacy") return "privacy";
+      return "";
+    }
+    function renderLegalAccept() {
+      const el = document.getElementById("termsAcceptText");
+      if (!el) return;
+      const terms = '<a href="/terms">' + escapeHtml(t("legal.termsBook")) + "</a>";
+      const privacy = '<a href="/privacy">' + escapeHtml(t("legal.privacyBook")) + "</a>";
+      el.innerHTML = t("legal.acceptHtml").split("{terms}").join(terms).split("{privacy}").join(privacy);
+    }
+    async function refreshLegalPage() {
+      const kind = legalKind();
+      const page = document.getElementById("legalPage");
+      if (!page) return;
+      if (!kind) {
+        document.body.classList.remove("legal-open");
+        page.hidden = true;
+        return;
+      }
+      document.body.classList.add("legal-open");
+      page.hidden = false;
+      const title = document.getElementById("legalTitle");
+      if (title) title.textContent = kind === "privacy" ? t("legal.privacyBook") : t("legal.termsBook");
+      document.title = (kind === "privacy" ? t("legal.privacyBook") : t("legal.termsBook")) + " · " + t("app.name");
+      try {
+        const res = await _rawFetch("/api/legal?lang=" + encodeURIComponent(currentLang));
+        const data = await res.json();
+        const body = document.getElementById("legalBody");
+        if (body) body.innerHTML = (kind === "privacy" ? data.privacy : data.terms) || "";
+        const meta = document.getElementById("legalMeta");
+        if (meta) {
+          const updated = t("legal.updated", { date: data.updated || "2026-08-18" });
+          const contact = t("legal.contact", { contact: data.contact || data.operator_email || t("legal.templateNote") });
+          meta.textContent = updated + " · " + contact + " · " + t("legal.templateNote");
+        }
+      } catch (e) {}
+    }
+    const legalLangToggle = document.getElementById("legalLangToggle");
+    if (legalLangToggle) {
+      legalLangToggle.addEventListener("click", () => setLang(currentLang === "zh" ? "en" : "zh"));
+    }
     hydrateLang().then(() => {
+      refreshLegalPage();
       probeAuth().then(() => {
         loadCatalog().catch(() => {});
         loadHistory();

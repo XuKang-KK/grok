@@ -142,7 +142,17 @@
     "userAuth.loginSubmit": "登录",
     "userAuth.registerSubmit": "注册并登录",
     "userAuth.logout": "退出",
-    "userAuth.bad": "用户名或密码不正确"
+    "userAuth.bad": "用户名或密码不正确",
+    "legal.terms": "服务条款",
+    "legal.privacy": "隐私政策",
+    "legal.termsBook": "《服务条款》",
+    "legal.privacyBook": "《隐私政策》",
+    "legal.acceptHtml": "我已阅读并同意{terms}和{privacy}",
+    "legal.acceptRequired": "请先阅读并同意服务条款和隐私政策",
+    "legal.back": "返回聊天",
+    "legal.updated": "最后更新：{date}",
+    "legal.contact": "联系：{contact}",
+    "legal.templateNote": "本页为产品模板，对外上线前请运营者自行审阅。"
   },
   "en": {
     "app.name": "KK AI助手",
@@ -287,6 +297,16 @@
     "userAuth.loginSubmit": "Sign in",
     "userAuth.registerSubmit": "Register and sign in",
     "userAuth.logout": "Sign out",
-    "userAuth.bad": "Incorrect username or password"
+    "userAuth.bad": "Incorrect username or password",
+    "legal.terms": "Terms",
+    "legal.privacy": "Privacy",
+    "legal.termsBook": "Terms of Service",
+    "legal.privacyBook": "Privacy Policy",
+    "legal.acceptHtml": "I have read and agree to the {terms} and {privacy}",
+    "legal.acceptRequired": "Please read and agree to the Terms and Privacy Policy first",
+    "legal.back": "Back to chat",
+    "legal.updated": "Last updated: {date}",
+    "legal.contact": "Contact: {contact}",
+    "legal.templateNote": "This page is a product template. Review it before a public launch."
   }
 }

@@ -87,8 +87,10 @@ from app.settings import (  # noqa: E402
     public_settings,
     save_settings,
     strip_secrets,
+    get_language,
 )
 from app.tools import IMAGE_EXTS, MAX_UPLOAD_BYTES, WORKSPACE, save_upload  # noqa: E402
+from app.legal import legal_payload  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MEDIA_FOLDERS = {"generated", "uploads", "screenshots"}
@@ -164,6 +166,7 @@ class LoginRequest(BaseModel):
 class AccountAuthRequest(BaseModel):
     username: str = Field(default="", max_length=64)
     password: str = Field(default="", max_length=256)
+    accepted_terms: bool = False
 
 
 class ModelSelect(BaseModel):
@@ -240,9 +243,23 @@ def _session_view(sess: Session, request: Request | None = None) -> dict[str, An
     }
 
 
+def _spa() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+    return _spa()
+
+
+@app.get("/terms")
+async def terms_page() -> FileResponse:
+    return _spa()
+
+
+@app.get("/privacy")
+async def privacy_page() -> FileResponse:
+    return _spa()
 
 
 @app.get("/manifest.webmanifest")
@@ -308,6 +325,14 @@ async def ready() -> dict[str, Any]:
     return _ready_payload()
 
 
+@app.get("/api/legal")
+async def api_legal(request: Request) -> dict[str, Any]:
+    lang = (request.query_params.get("lang") or "").strip()
+    if not lang:
+        lang = get_language()
+    return legal_payload(lang)
+
+
 @app.post("/api/login")
 async def login(req: LoginRequest, request: Request, response: Response) -> dict[str, Any]:
     expected = get_access_token()
@@ -350,6 +375,8 @@ async def auth_register(
 ) -> dict[str, Any]:
     if not allow_signup():
         raise HTTPException(status_code=403, detail="注册已关闭")
+    if not req.accepted_terms:
+        raise HTTPException(status_code=400, detail="请先同意服务条款和隐私政策")
     user, err = register_user(req.username, req.password)
     if err or user is None:
         detail = err or "注册失败"

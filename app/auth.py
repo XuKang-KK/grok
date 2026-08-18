@@ -38,6 +38,7 @@ _PUBLIC_API = {
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/logout"),
     ("GET", "/api/auth/me"),
+    ("GET", "/api/legal"),
 }
 
 # Visitor-reachable prefixes when KK_PUBLIC is on (chat stays open).

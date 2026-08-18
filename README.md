@@ -1,6 +1,6 @@
-# KK AI助手（本地 v1.6.0）
+# KK AI助手（本地 v1.6.1）
 
-一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.6.0 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
+一个可在本机运行的完整 KK AI助手：浏览器里聊天，模型循环调用工具直到给出最终回答。v1.6.1 支持网页 / 桌面 / 手机（PWA），界面默认中文、可切换英文。
 
 **对外 = 右侧 GPT / Claude / Grok / Gemini，后台中转站，不展示价格。** 对话一律走 CCAPI；右侧不出现 xAI / OpenAI / Anthropic / 中转站页签，也不显示基址或价格。
 
@@ -209,6 +209,8 @@ grok-assistant/
   app/static/i18n.json
   app/static/manifest.webmanifest
   app/static/sw.js
+  app/static/legal-zh.md
+  app/static/legal-en.md
   app/static/icons/
   desktop/             # Electron wrapper
   mobile/README.md     # PWA mobile client v1
@@ -255,7 +257,7 @@ KK_REQUIRE_ACCOUNT=1
 # KK_GLOBAL_TOKEN_LIMIT=2000000
 ```
 
-访客聊天在 `KK_REQUIRE_ACCOUNT=1`（对外默认）时必须先注册/登录。会话与配额按 `user:<id>` 隔离，不再允许匿名 `kk_vid` 聊天。管理员接口仍用 `KK_ACCESS_TOKEN`（不是用户 `is_admin`）。`data/settings.json` 里的 API 密钥可用 `KK_SECRETS_KEY` 加密（`enc:v1:`）。HTTPS、服务条款、OAuth 仍需你自己完成。CCAPI 花销记在你的账号上。
+访客聊天在 `KK_REQUIRE_ACCOUNT=1`（对外默认）时必须先注册/登录。 应用内已提供 `/terms` 与 `/privacy`（中英条款模板）；对外上线前运营者应自行审阅，并可设置 `KK_OPERATOR_EMAIL`。会话与配额按 `user:<id>` 隔离，不再允许匿名 `kk_vid` 聊天。管理员接口仍用 `KK_ACCESS_TOKEN`（不是用户 `is_admin`）。`data/settings.json` 里的 API 密钥可用 `KK_SECRETS_KEY` 加密（`enc:v1:`）。HTTPS 与 OAuth 仍需你自己完成；内置服务条款是模板，上线前请审阅。CCAPI 花销记在你的账号上。
 
 ## 上线前你必须自己做的
 
